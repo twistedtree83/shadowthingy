@@ -146,6 +146,22 @@
   .check .detail { color: var(--ink-faint); font-family: var(--mono); font-size: 10.5px; margin-left: auto; text-align: right; }
   .check.fail .label { color: var(--ink); }
 
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .5rem; margin-bottom: .6rem; }
+  .field-grid label {
+    display: flex; flex-direction: column; gap: .12rem;
+    font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .field-grid label:has(#in-date), .field-grid label:has(#in-time) { grid-column: span 1; }
+  .field-grid input {
+    background: var(--raised); border: 1px solid var(--rule); color: var(--ink);
+    padding: .22rem .35rem; font-size: 12px; border-radius: 2px; width: 100%;
+    text-transform: none; letter-spacing: 0;
+  }
+  .field-grid input:focus { outline: none; border-color: var(--accent); }
+
+  .note { margin: .5rem 0 0; font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
+  .note.warn { color: var(--accent); }
+
   .tally { font-family: var(--mono); font-size: 11px; }
   .tally.pass { color: var(--good); }
   .tally.fail { color: var(--bad); }
@@ -191,6 +207,25 @@
       <div class="reading"><span class="k">Elevation</span><span class="v pending" data-read="elevation">—</span></div>
       <div class="reading"><span class="k">Azimuth</span><span class="v pending" data-read="azimuth">—</span></div>
       <div class="reading"><span class="k">Shadow multiplier</span><span class="v pending" data-read="multiplier">—</span></div>
+    </div>
+
+    <div class="readout-group" id="solar-panel">
+      <h2>Where the sun was</h2>
+      <div class="field-grid">
+        <label>Latitude <input type="number" id="in-lat" value="-33.87" step="0.01" min="-90" max="90"></label>
+        <label>Longitude <input type="number" id="in-lon" value="151.21" step="0.01" min="-180" max="180"></label>
+        <label>Date <input type="date" id="in-date" value="2023-12-22"></label>
+        <label>Time <input type="time" id="in-time" value="13:00"></label>
+        <label>UTC offset <input type="number" id="in-tz" value="11" step="0.25" min="-12" max="14"></label>
+      </div>
+      <div class="reading"><span class="k">Elevation</span><span class="v" data-solar="elevation">—</span></div>
+      <div class="reading"><span class="k">Azimuth</span><span class="v" data-solar="azimuth">—</span></div>
+      <div class="reading"><span class="k">Shadow multiplier</span><span class="v" data-solar="multiplier">—</span></div>
+      <div class="reading"><span class="k">Declination</span><span class="v" data-solar="declination">—</span></div>
+      <div class="reading"><span class="k">Equation of time</span><span class="v" data-solar="eot">—</span></div>
+      <div class="reading"><span class="k">Solar noon</span><span class="v" data-solar="noon">—</span></div>
+      <div class="reading"><span class="k">Sunrise / sunset</span><span class="v" data-solar="daylight">—</span></div>
+      <p class="note" id="solar-note"></p>
     </div>
 
     <div class="readout-group">
@@ -555,6 +590,201 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── solar ───────────────────────────────────────────────────────────────
+     NOAA's solar position algorithm, implemented directly. No library: the
+     algorithm is short, the constants are published, and a dependency here
+     would sit in the one place the app's correctness is most load-bearing.
+
+     Nothing in here reads a clock. The instant arrives as year/month/day plus
+     local minutes past midnight plus a UTC offset, because the app's whole job
+     is to evaluate instants that are not now.
+     ──────────────────────────────────────────────────────────────────────── */
+  const solar = (function () {
+    const D2R = Math.PI / 180;
+    const R2D = 180 / Math.PI;
+
+    const sin = function (deg) { return Math.sin(deg * D2R); };
+    const cos = function (deg) { return Math.cos(deg * D2R); };
+    const tan = function (deg) { return Math.tan(deg * D2R); };
+
+    function mod360(x) { return ((x % 360) + 360) % 360; }
+
+    // Julian Day at 00:00 UT on the given calendar date (Gregorian).
+    function julianDay(year, month, day) {
+      let y = year, m = month;
+      if (m <= 2) { y -= 1; m += 12; }
+      const A = Math.floor(y / 100);
+      const B = 2 - A + Math.floor(A / 4);
+      return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + day + B - 1524.5;
+    }
+
+    // Calendar date from a day index within a year, so a caller can sweep a
+    // year without a Date object anywhere near the core.
+    function dateFromDayOfYear(year, dayIndex) {
+      const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+      const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let remaining = dayIndex;
+      for (let m = 0; m < 12; m++) {
+        if (remaining < lengths[m]) return { year: year, month: m + 1, day: remaining + 1 };
+        remaining -= lengths[m];
+      }
+      return { year: year, month: 12, day: 31 };
+    }
+
+    /* Atmospheric refraction in degrees, from NOAA's piecewise fit.
+
+       This is not a refinement. The cases this app exists for are long-shadow
+       cases, long shadows mean low sun, and low sun is exactly where refraction
+       is largest — over half a degree at the horizon. Omitting it would bias
+       the entire class of interesting inputs. */
+    function refraction(elevationDeg) {
+      if (elevationDeg > 85) return 0;
+      const t = tan(elevationDeg);
+      let arcseconds;
+      if (elevationDeg > 5) {
+        arcseconds = 58.1 / t - 0.07 / (t * t * t) + 0.000086 / Math.pow(t, 5);
+      } else if (elevationDeg > -0.575) {
+        const e = elevationDeg;
+        arcseconds = 1735 + e * (-518.2 + e * (103.4 + e * (-12.79 + e * 0.711)));
+      } else {
+        arcseconds = -20.772 / t;
+      }
+      return arcseconds / 3600;
+    }
+
+    // Everything that depends only on the instant, not on the place.
+    function ephemeris(T) {
+      const L0 = mod360(280.46646 + T * (36000.76983 + 0.0003032 * T));
+      const M = 357.52911 + T * (35999.05029 - 0.0001537 * T);
+      const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T);
+
+      const C = sin(M) * (1.914602 - T * (0.004817 + 0.000014 * T))
+              + sin(2 * M) * (0.019993 - 0.000101 * T)
+              + sin(3 * M) * 0.000289;
+
+      const trueLong = L0 + C;
+      const omega = 125.04 - 1934.136 * T;
+      const lambda = trueLong - 0.00569 - 0.00478 * sin(omega);
+
+      const eps0 = 23 + (26 + (21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))) / 60) / 60;
+      const eps = eps0 + 0.00256 * cos(omega);
+
+      const declination = Math.asin(sin(eps) * sin(lambda)) * R2D;
+
+      const y = Math.pow(tan(eps / 2), 2);
+      const equationOfTime = 4 * R2D * (
+        y * Math.sin(2 * L0 * D2R)
+        - 2 * e * Math.sin(M * D2R)
+        + 4 * e * y * Math.sin(M * D2R) * Math.cos(2 * L0 * D2R)
+        - 0.5 * y * y * Math.sin(4 * L0 * D2R)
+        - 1.25 * e * e * Math.sin(2 * M * D2R)
+      );
+
+      return {
+        meanLongitude: L0, meanAnomaly: M, eccentricity: e,
+        apparentLongitude: lambda, obliquity: eps,
+        declination: declination, equationOfTime: equationOfTime,
+      };
+    }
+
+    function centuries(args) {
+      // The instant is local, so the UTC offset comes off before the Julian Day.
+      const utcMinutes = args.minutes - args.tzOffsetHours * 60;
+      const jd = julianDay(args.year, args.month, args.day) + utcMinutes / 1440;
+      return { jd: jd, T: (jd - 2451545) / 36525 };
+    }
+
+    function position(args) {
+      const time = centuries(args);
+      const eph = ephemeris(time.T);
+      const phi = args.latitude;
+      const delta = eph.declination;
+
+      // True solar time, then the hour angle: 0 at solar noon, negative before.
+      const tst = args.minutes + eph.equationOfTime + 4 * args.longitude - 60 * args.tzOffsetHours;
+      const H = tst / 4 - 180;
+
+      const sinAlt = sin(phi) * sin(delta) + cos(phi) * cos(delta) * cos(H);
+      const elevationTrue = Math.asin(Math.max(-1, Math.min(1, sinAlt))) * R2D;
+      const bend = refraction(elevationTrue);
+      const elevation = elevationTrue + bend;
+
+      // From north, clockwise. At solar noon H = 0, so this reduces to
+      // atan2(0, tanδ·cosφ − sinφ): negative x gives 180° in the northern
+      // hemisphere and positive x gives 0° in the southern. That flip is the
+      // whole hemisphere question, and it falls out of the formula rather than
+      // out of a branch.
+      const azimuth = mod360(
+        Math.atan2(-sin(H), tan(delta) * cos(phi) - sin(phi) * cos(H)) * R2D,
+      );
+
+      return {
+        julianDay: time.jd,
+        T: time.T,
+        declination: delta,
+        obliquity: eph.obliquity,
+        equationOfTime: eph.equationOfTime,
+        trueSolarTime: tst,
+        hourAngle: H,
+        elevationTrue: elevationTrue,
+        refraction: bend,
+        elevation: elevation,
+        azimuth: azimuth,
+        // A sun at or below the horizon casts no measurable shadow. A huge
+        // finite multiplier there would be exactly the false precision this app
+        // exists to avoid.
+        shadowMultiplier: elevation > 0 ? 1 / tan(elevation) : Infinity,
+      };
+    }
+
+    // Local clock minutes at which true solar time reaches noon.
+    function solarNoonMinutes(args) {
+      const approx = 720 - 4 * args.longitude + 60 * args.tzOffsetHours;
+      // One refinement pass: the equation of time is evaluated at the estimate
+      // rather than at midnight, which is worth about a second.
+      const eot = ephemeris(centuries({ ...args, minutes: approx }).T).equationOfTime;
+      return approx - eot;
+    }
+
+    /* Sunrise and sunset, at the standard 90.833° zenith — the sun's upper limb
+       at the horizon with mean refraction applied. Returns polar day or night
+       explicitly rather than producing a NaN and letting it propagate. */
+    function sunTimes(args) {
+      const noon = solarNoonMinutes(args);
+      const eph = ephemeris(centuries({ ...args, minutes: noon }).T);
+      const phi = args.latitude;
+      const delta = eph.declination;
+
+      const cosH0 = (cos(90.833) - sin(phi) * sin(delta)) / (cos(phi) * cos(delta));
+      if (cosH0 < -1) {
+        return { polar: "day", sunriseMinutes: null, sunsetMinutes: null, dayLengthMinutes: 1440, solarNoonMinutes: noon };
+      }
+      if (cosH0 > 1) {
+        return { polar: "night", sunriseMinutes: null, sunsetMinutes: null, dayLengthMinutes: 0, solarNoonMinutes: noon };
+      }
+
+      const H0 = Math.acos(cosH0) * R2D;
+      const half = 4 * H0;
+      return {
+        polar: null,
+        sunriseMinutes: noon - half,
+        sunsetMinutes: noon + half,
+        dayLengthMinutes: 2 * half,
+        solarNoonMinutes: noon,
+      };
+    }
+
+    return {
+      julianDay: julianDay,
+      dateFromDayOfYear: dateFromDayOfYear,
+      refraction: refraction,
+      ephemeris: ephemeris,
+      position: position,
+      solarNoonMinutes: solarNoonMinutes,
+      sunTimes: sunTimes,
+    };
+  })();
+
   /* ── synth ───────────────────────────────────────────────────────────────
      The synthetic scene generator. Builds a 3D scene with known camera, known
      sun and known poles, computes each shadow tip analytically, and projects
@@ -745,6 +975,74 @@ var Gnomon = (function () {
     };
   })();
 
+  /* The six solar invariants, shown in the panel so a sceptical user can
+     confirm the engine rather than trust it. Each is DERIVED — where a physical
+     constant appears it is checked against the value the algorithm computed for
+     itself, so a transcription error cannot be confirmed by an expectation
+     carrying the same error. */
+  tests.suite("solar engine", function (t) {
+    const LONDON = { latitude: 51.5, longitude: -0.13, tzOffsetHours: 0 };
+    const SYDNEY = { latitude: -33.87, longitude: 151.21, tzOffsetHours: 10 };
+    const JUNE = { year: 2023, month: 6, day: 21 };
+    const DEC = { year: 2023, month: 12, day: 22 };
+    const MAR = { year: 2023, month: 3, day: 20 };
+
+    const noonAt = function (date, place) {
+      return solar.position(Object.assign({}, date, place, {
+        minutes: solar.solarNoonMinutes(Object.assign({}, date, place)),
+      }));
+    };
+
+    // 1 — declination reaches the obliquity at the solstices, zero at equinox.
+    const june = noonAt(JUNE, LONDON), dec = noonAt(DEC, LONDON), mar = noonAt(MAR, LONDON);
+    t.close("June declination is +ε", june.declination, june.obliquity, 0.02);
+    t.close("December declination is −ε", dec.declination, -dec.obliquity, 0.02);
+    t.close("equinox declination is zero", mar.declination, 0, 0.5);
+
+    // 2 — the equation of time stays in range with four zero crossings.
+    let lo = Infinity, hi = -Infinity, crossings = 0, previous = null;
+    for (let d = 0; d < 365; d++) {
+      const day = solar.dateFromDayOfYear(2023, d);
+      const eot = solar.position(Object.assign({}, day, LONDON, { minutes: 720 })).equationOfTime;
+      if (eot < lo) lo = eot;
+      if (eot > hi) hi = eot;
+      if (previous !== null && Math.sign(eot) !== Math.sign(previous)) crossings++;
+      previous = eot;
+    }
+    t.within("equation of time minimum", lo, -14.5, -13);
+    t.within("equation of time maximum", hi, 15.5, 16.5);
+    t.close("equation of time zero crossings", crossings, 4, 0);
+
+    // 3 — solar noon elevation is 90° − |φ − δ|.
+    t.close("Sydney December noon", noonAt(DEC, SYDNEY).elevationTrue,
+      90 - Math.abs(SYDNEY.latitude - noonAt(DEC, SYDNEY).declination), 0.1);
+    t.close("Sydney June noon", noonAt(JUNE, SYDNEY).elevationTrue,
+      90 - Math.abs(SYDNEY.latitude - noonAt(JUNE, SYDNEY).declination), 0.1);
+    t.close("London June noon", noonAt(JUNE, LONDON).elevationTrue,
+      90 - Math.abs(LONDON.latitude - june.declination), 0.1);
+
+    // 4 — the hemisphere test. A sign error hides perfectly in northern-only
+    // checking, so the southern case is the one that matters here.
+    t.close("London noon sun is south", noonAt(JUNE, LONDON).azimuth, 180, 1);
+    const sydAz = noonAt(DEC, SYDNEY).azimuth;
+    t.close("Sydney noon sun is north", Math.min(sydAz, 360 - sydAz), 0, 1);
+
+    // 5 — elevation is symmetric about solar noon.
+    const noonMin = solar.solarNoonMinutes(Object.assign({}, MAR, SYDNEY));
+    const before = solar.position(Object.assign({}, MAR, SYDNEY, { minutes: noonMin - 120 })).elevationTrue;
+    const after = solar.position(Object.assign({}, MAR, SYDNEY, { minutes: noonMin + 120 })).elevationTrue;
+    t.close("symmetric ±2h about solar noon", before, after, 0.12);
+
+    // 6 — day length varies correctly, and oppositely between hemispheres.
+    const sj = solar.sunTimes(Object.assign({}, JUNE, SYDNEY));
+    const sd = solar.sunTimes(Object.assign({}, DEC, SYDNEY));
+    const lj = solar.sunTimes(Object.assign({}, JUNE, LONDON));
+    const ld = solar.sunTimes(Object.assign({}, DEC, LONDON));
+    t.ok("Sydney: December is the long day", sd.dayLengthMinutes > sj.dayLengthMinutes);
+    t.ok("London: June is the long day", lj.dayLengthMinutes > ld.dayLengthMinutes);
+    t.close("equinox day length ≈ 12h", solar.sunTimes(Object.assign({}, MAR, SYDNEY)).dayLengthMinutes, 720, 15);
+  });
+
   /* Registered on the shared registry, so these run in the visible panel AND in
      the headless suite from one definition. Hand-checkable cases only. */
   tests.suite("projective geometry", function (t) {
@@ -779,10 +1077,11 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.3.0",
+    version: "0.4.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
+    solar: solar,
     geom: geom,
     synth: synth,
   };
@@ -861,10 +1160,103 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     if (open) renderDebug();
   });
 
+  /* ── the manual solar calculator ───────────────────────────────────────────
+     Exists so the engine can be cross-checked by hand against NOAA's published
+     calculator. Everything it shows comes from Gnomon.solar; the shell parses
+     the inputs and formats the output, and does no astronomy of its own. */
+  const solarInputs = ["in-lat", "in-lon", "in-date", "in-time", "in-tz"].map(function (id) {
+    return document.getElementById(id);
+  });
+
+  function clockString(minutes) {
+    if (minutes === null || !Number.isFinite(minutes)) return "—";
+    const wrapped = ((minutes % 1440) + 1440) % 1440;
+    const h = Math.floor(wrapped / 60);
+    const m = Math.floor(wrapped % 60);
+    return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+  }
+
+  function readSolarInputs() {
+    const [lat, lon, date, time, tz] = solarInputs;
+    const dateParts = String(date.value).split("-").map(Number);
+    const timeParts = String(time.value).split(":").map(Number);
+    if (dateParts.length !== 3 || dateParts.some(Number.isNaN)) return null;
+    if (timeParts.length < 2 || timeParts.some(Number.isNaN)) return null;
+
+    return {
+      year: dateParts[0], month: dateParts[1], day: dateParts[2],
+      minutes: timeParts[0] * 60 + timeParts[1],
+      latitude: Number(lat.value), longitude: Number(lon.value),
+      tzOffsetHours: Number(tz.value),
+    };
+  }
+
+  function renderSolar() {
+    const args = readSolarInputs();
+    const note = document.getElementById("solar-note");
+    const put = function (key, text) {
+      document.querySelector('[data-solar="' + key + '"]').textContent = text;
+    };
+
+    if (!args) {
+      for (const k of ["elevation", "azimuth", "multiplier", "declination", "eot", "noon", "daylight"]) put(k, "—");
+      note.textContent = "Incomplete date or time.";
+      note.className = "note";
+      return;
+    }
+
+    const p = Gnomon.solar.position(args);
+    const times = Gnomon.solar.sunTimes(args);
+
+    put("elevation", p.elevation.toFixed(3) + "°");
+    put("azimuth", p.azimuth.toFixed(3) + "°");
+    // A sun below the horizon has no shadow to multiply. Saying so beats
+    // printing a vast finite number that looks like a measurement.
+    put("multiplier", p.elevation > 0 ? "×" + p.shadowMultiplier.toFixed(3) : "no shadow");
+    put("declination", p.declination.toFixed(3) + "°");
+    put("eot", (p.equationOfTime >= 0 ? "+" : "") + p.equationOfTime.toFixed(2) + " min");
+    put("noon", clockString(Gnomon.solar.solarNoonMinutes(args)));
+    put("daylight",
+      times.polar === "day" ? "sun never sets"
+      : times.polar === "night" ? "sun never rises"
+      : clockString(times.sunriseMinutes) + " / " + clockString(times.sunsetMinutes));
+
+    if (p.elevation <= 0) {
+      note.textContent = "The sun is below the horizon at this instant — no shadow exists to measure.";
+      note.className = "note warn";
+    } else if (p.elevation < 5) {
+      // G14 turns this into a real guard. Flagged here already because the
+      // manual calculator is where a user first meets the low-sun regime.
+      note.textContent = "Below 5°: refraction dominates and shadow tips blur. Treat any answer here as unreliable.";
+      note.className = "note warn";
+    } else {
+      note.textContent = "";
+      note.className = "note";
+    }
+
+    Gnomon.debug.set("solar", "declination", p.declination);
+    Gnomon.debug.set("solar", "equation of time", p.equationOfTime);
+    Gnomon.debug.set("solar", "hour angle", p.hourAngle);
+    Gnomon.debug.set("solar", "true solar time", p.trueSolarTime);
+    Gnomon.debug.set("solar", "elevation (geometric)", p.elevationTrue);
+    Gnomon.debug.set("solar", "refraction", p.refraction);
+    Gnomon.debug.set("solar", "elevation (apparent)", p.elevation);
+    Gnomon.debug.set("solar", "azimuth", p.azimuth);
+    Gnomon.debug.set("solar", "julian day", p.julianDay);
+    if (panel.getAttribute("data-open") === "true") renderDebug();
+  }
+
+  for (const input of solarInputs) {
+    input.addEventListener("input", renderSolar);
+    input.addEventListener("change", renderSolar);
+  }
+
   // Exposed so later slices re-render the panel after they compute.
   window.gnomonRenderDebug = renderDebug;
+  window.gnomonRenderSolar = renderSolar;
 
   Gnomon.debug.set("session", "core version", Gnomon.version);
+  renderSolar();
   renderDebug();
 })();
 </script>
