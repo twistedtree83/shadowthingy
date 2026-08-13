@@ -88,7 +88,7 @@
       "id": "G9",
       "issue": 10,
       "title": "Monte Carlo uncertainty and the azimuth-only fallback",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G8"

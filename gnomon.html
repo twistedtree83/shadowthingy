@@ -1768,6 +1768,263 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── montecarlo ──────────────────────────────────────────────────────────
+     Uncertainty measured, not derived.
+
+     Analytic propagation was rejected because the pipeline is not locally
+     linear near the cases that matter: near-parallel line families and
+     near-degenerate calibrations are precisely where a first-order
+     approximation stops being valid, and those are the cases where an honest
+     error bar matters most. Sampling costs a few hundred milliseconds and is
+     correct in the regimes where the closed form silently is not.
+
+     The generator is seeded and passed in, so a given set of marks always
+     produces the same band. A report that cannot be reproduced is not evidence.
+     ──────────────────────────────────────────────────────────────────────── */
+  const montecarlo = (function () {
+    // Above these p5–p95 spreads the answer has stopped being a measurement.
+    // Reporting a 200-degree "range" would be a large finite number standing in
+    // for "we cannot tell", which are different claims.
+    const ELEVATION_UNBOUNDED_SPREAD = 60;
+    const AZIMUTH_UNBOUNDED_SPREAD = 120;
+
+    // mulberry32 — small, fast, and good enough for perturbing click positions.
+    // Math.random is forbidden in the core precisely so this is reproducible.
+    function seededRandom(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // Box-Muller. The second variate is discarded rather than cached: caching
+    // would make a draw depend on how many draws preceded it, which quietly
+    // breaks reproducibility when the sample count changes.
+    function gaussian(random, sigma) {
+      let u = random();
+      if (u < 1e-12) u = 1e-12;
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * random()) * sigma;
+    }
+
+    function percentile(sorted, p) {
+      if (!sorted.length) return null;
+      const i = (sorted.length - 1) * p;
+      const lo = Math.floor(i), hi = Math.ceil(i);
+      return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+    }
+
+    function summarise(values) {
+      const sorted = values.slice().sort(function (a, b) { return a - b; });
+      return { p5: percentile(sorted, 0.05), p50: percentile(sorted, 0.5), p95: percentile(sorted, 0.95) };
+    }
+
+    /* Angles need circular statistics. A sun near due north straddles the 0/360
+       seam, and naive percentiles would put its median at 180 — pointing
+       exactly the wrong way, which is a spectacular way to be confidently
+       wrong. Everything is unwrapped about the circular mean first. */
+    function summariseAngles(degrees) {
+      if (!degrees.length) return { p5: null, p50: null, p95: null };
+      let sx = 0, sy = 0;
+      for (const d of degrees) {
+        sx += Math.cos((d * Math.PI) / 180);
+        sy += Math.sin((d * Math.PI) / 180);
+      }
+      const centre = (Math.atan2(sy, sx) * 180) / Math.PI;
+      const offsets = degrees.map(function (d) {
+        return ((d - centre + 540) % 360) - 180;
+      });
+      const s = summarise(offsets);
+      const wrap = function (x) { return x === null ? null : ((centre + x) % 360 + 360) % 360; };
+      return { p5: wrap(s.p5), p50: wrap(s.p50), p95: wrap(s.p95), spread: s.p95 - s.p5 };
+    }
+
+    function begin(input) {
+      return {
+        input: input,
+        samples: input.samples || 500,
+        completed: 0,
+        done: false,
+        elevations: [],
+        azimuths: [],
+        residuals: [],
+        failures: 0,
+        // The unperturbed solve, so the conditioning of the real marks is known
+        // independently of how the noisy draws happen to land.
+        base: baseSolve(input),
+      };
+    }
+
+    function familiesOf(objects) {
+      return {
+        vertical: objects.map(function (o) { return { a: o.base, b: o.top }; }),
+        shadow: objects.map(function (o) { return { a: o.base, b: o.tip }; }),
+        ray: objects.map(function (o) { return { a: o.top, b: o.tip }; }),
+      };
+    }
+
+    function baseSolve(input) {
+      try {
+        const f = familiesOf(input.objects);
+        const vps = {
+          z: geom.vanishingPoint(f.vertical),
+          shadow: geom.vanishingPoint(f.shadow),
+          sun: geom.vanishingPoint(f.ray),
+        };
+        return {
+          vanishing: vps,
+          result: sun.solve({
+            vanishing: vps, focalPx: input.focalPx,
+            principalPoint: input.principalPoint, objects: input.objects,
+            reference: input.reference,
+          }),
+        };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function drawOnce(job) {
+      const input = job.input;
+      const random = input.random;
+      const sigma = input.sigma === undefined ? 3 : input.sigma;
+
+      const jitter = function (p) {
+        return [p[0] + gaussian(random, sigma), p[1] + gaussian(random, sigma)];
+      };
+      const objects = input.objects.map(function (o) {
+        return { base: jitter(o.base), top: jitter(o.top), tip: jitter(o.tip) };
+      });
+
+      // f is sampled across the sweep the winning tier earned.
+      const sweep = input.sweep === undefined ? 0 : input.sweep;
+      const focal = input.focalPx * (1 + (random() * 2 - 1) * sweep);
+
+      /* The principal point is sampled too, and on a cropped image this matters
+         far MORE than the focal length.
+
+         Measured on the fixture: widening the focal sweep from ±2% to full
+         range moves the elevation band by 0.03° — because d_up and d_sun are
+         built with the same f, so scaling it rotates both alike and their
+         mutual angle barely changes. Elevation is genuinely robust to f, which
+         is good news rather than a bug.
+
+         What a crop actually destroys is the principal point, and that DOES
+         move the answer: it translates every vanishing point relative to c,
+         which changes the angles directly. Sampling it is therefore the
+         mechanism by which a cropped image earns its wide band. */
+      const cSigma = input.principalSigma || 0;
+      const principal = cSigma === 0
+        ? input.principalPoint
+        : [
+            input.principalPoint[0] + gaussian(random, cSigma),
+            input.principalPoint[1] + gaussian(random, cSigma),
+          ];
+
+      const reference = input.reference && input.reference.from
+        ? {
+            from: jitter(input.reference.from),
+            to: jitter(input.reference.to),
+            bearing: input.reference.bearing,
+          }
+        : null;
+
+      try {
+        const f = familiesOf(objects);
+        const vps = {
+          z: geom.vanishingPoint(f.vertical),
+          shadow: geom.vanishingPoint(f.shadow),
+          sun: geom.vanishingPoint(f.ray),
+        };
+        const r = sun.solve({
+          vanishing: vps, focalPx: focal,
+          principalPoint: principal, objects: objects, reference: reference,
+        });
+        if (Number.isFinite(r.elevation)) job.elevations.push(r.elevation);
+        if (Number.isFinite(r.azimuth)) job.azimuths.push(r.azimuth);
+        if (Number.isFinite(r.residual)) job.residuals.push(r.residual);
+      } catch (err) {
+        // A draw that lands on a degenerate configuration is counted, not
+        // hidden — a high failure rate is itself information about the marks.
+        job.failures++;
+      }
+    }
+
+    function step(job, count) {
+      const limit = Math.min(count, job.samples - job.completed);
+      for (let i = 0; i < limit; i++) {
+        drawOnce(job);
+        job.completed++;
+      }
+      if (job.completed >= job.samples) job.done = true;
+      return job;
+    }
+
+    function finish(job) {
+      const input = job.input;
+      const base = job.base;
+
+      /* Poor conditioning propagates as UNBOUNDED, never as a large finite
+         range. Two independent routes to that verdict: the real marks failing
+         to fix a direction, or the sampled spread being so wide the number has
+         stopped being a measurement. */
+      const sunUnconditioned = !base || base.vanishing.sun.wellConditioned === false;
+      const groundUnconditioned = !base
+        || base.vanishing.shadow.wellConditioned === false
+        || base.vanishing.z.wellConditioned === false;
+
+      const elevationRequested = !input.azimuthOnly;
+      let elevation = null;
+      if (elevationRequested) {
+        const e = summarise(job.elevations);
+        const spread = e.p95 === null ? Infinity : e.p95 - e.p5;
+        elevation = {
+          p5: e.p5, p50: e.p50, p95: e.p95,
+          unbounded: sunUnconditioned || spread > ELEVATION_UNBOUNDED_SPREAD,
+        };
+      }
+
+      const a = summariseAngles(job.azimuths);
+      const azimuthSpread = a.spread === undefined ? Infinity : a.spread;
+      const azimuth = {
+        p5: a.p5, p50: a.p50, p95: a.p95,
+        unbounded: groundUnconditioned || azimuthSpread > AZIMUTH_UNBOUNDED_SPREAD,
+      };
+
+      return {
+        samples: job.completed,
+        failures: job.failures,
+        elevation: elevation,
+        azimuth: azimuth,
+        residual: summarise(job.residuals),
+        base: base ? base.result : null,
+        // The headline verdict, so a caller does not have to remember which
+        // combination of flags means "cannot tell".
+        unbounded: (elevation ? elevation.unbounded : false) || azimuth.unbounded,
+        azimuthOnly: !!input.azimuthOnly || sunUnconditioned,
+      };
+    }
+
+    function run(input) {
+      const job = begin(input);
+      step(job, job.samples);
+      return finish(job);
+    }
+
+    return {
+      ELEVATION_UNBOUNDED_SPREAD: ELEVATION_UNBOUNDED_SPREAD,
+      AZIMUTH_UNBOUNDED_SPREAD: AZIMUTH_UNBOUNDED_SPREAD,
+      seededRandom: seededRandom,
+      gaussian: gaussian,
+      summarise: summarise,
+      summariseAngles: summariseAngles,
+      begin: begin, step: step, finish: finish, run: run,
+    };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -1870,7 +2127,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.7.0",
+    version: "0.8.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -1879,6 +2136,7 @@ var Gnomon = (function () {
     geom: geom,
     calib: calib,
     sun: sun,
+    montecarlo: montecarlo,
     synth: synth,
   };
 })();
@@ -2198,6 +2456,9 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     state.pending = {};
     state.reference = null;
     state.rectangle = [];
+    state.sun = null;
+    state.uncertainty = null;
+    state.calibration = null;
 
     putRead("dimensions", size.width + " × " + size.height);
     putRead("captured", analysis.capture
@@ -2617,6 +2878,9 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     state.pending = {};
     state.reference = null;
     state.rectangle = [];
+    state.sun = null;
+    state.uncertainty = null;
+    state.calibration = null;
     renderMarks();
     redraw();
   });
@@ -2668,7 +2932,8 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         Math.round(result.disagreement.geometry) + " px (geometry)");
     }
 
-    solveSun(result);
+    const solved = solveSun(result);
+    if (solved) startUncertainty(result);
     renderCalibrationNotes(result);
     renderDebug();
     return result;
@@ -2702,8 +2967,14 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     putRead("residual", result.residual.toFixed(2) + "°");
     const residualEl = document.querySelector('[data-read="residual"]');
-    // A rising residual means an assumption broke, so it stops looking like an
-    // ordinary reading once it does.
+    /* A rising residual means an assumption broke, so it stops looking like an
+       ordinary reading once it does.
+
+       These thresholds are provisional and G14 owns them properly. What G9
+       measured: the UNPERTURBED residual is the signal — 0.00 clean against
+       1.14 for a 12-degree lean — while the Monte Carlo band is dominated by
+       marking noise and does not separate the two at all. So this reads the
+       unperturbed value, and G17 tunes the numbers against real photographs. */
     residualEl.style.color = result.residual > 3 ? "var(--bad)"
       : result.residual > 1 ? "var(--accent)" : "var(--good)";
 
@@ -2761,6 +3032,141 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
              '</span><span class="msg">' + esc(f.message) + "</span></div>";
     }).join("");
     region.appendChild(wrap);
+  }
+
+  /* ── uncertainty ───────────────────────────────────────────────────────────
+     Runs the Monte Carlo in idle slices so the interface stays live. A slow
+     machine should feel slow, not broken.
+
+     The seed is fixed, so the same marks always produce the same band — a
+     report that cannot be reproduced is not evidence. */
+  const MC_SAMPLES = 500;
+  const MC_CHUNK = 25;
+  const MC_SEED = 20231222;
+  let mcJob = null;
+  let mcHandle = null;
+
+  const idle = window.requestIdleCallback
+    ? function (fn) { return window.requestIdleCallback(fn, { timeout: 120 }); }
+    : function (fn) { return setTimeout(fn, 0); };
+  const cancelIdle = window.cancelIdleCallback
+    ? function (h) { window.cancelIdleCallback(h); }
+    : function (h) { clearTimeout(h); };
+
+  function startUncertainty(calibration) {
+    if (mcHandle !== null) { cancelIdle(mcHandle); mcHandle = null; }
+    /* Drop the previous band the instant the marks change. A band left standing
+       while a new one computes belongs to marks that no longer exist — it would
+       be displayed against the current image and read as current, which is the
+       app's one forbidden failure mode. */
+    state.uncertainty = null;
+    const vps = currentFamilies();
+    if (!vps || !state.sun) { state.uncertainty = null; renderUncertainty(null); return; }
+
+    const haveReference = state.reference && state.reference.length === 2;
+    mcJob = Gnomon.montecarlo.begin({
+      objects: state.objects,
+      reference: haveReference
+        ? { from: state.reference[0], to: state.reference[1], bearing: Number(bearingInput.value) }
+        : null,
+      focalPx: calibration.focalPx,
+      sweep: calibration.sweep,
+      principalPoint: calibration.principalPoint,
+      sigma: 3,
+      /* A crop moves the principal point somewhere unknown, and that — not the
+         focal length — is what a crop actually costs. Sampling it across a
+         plausible fraction of the frame is the mechanism by which a cropped
+         image earns its visibly wide band. Zero when the centre is trustworthy.
+
+         0.15 of the width is a first estimate; G17 must tune it against real
+         cropped images. */
+      principalSigma: (state.meta && state.meta.cropped) ? 0.15 * state.image.width : 0,
+      samples: MC_SAMPLES,
+      random: Gnomon.montecarlo.seededRandom(MC_SEED),
+      azimuthOnly: !state.sun.elevationUsable,
+    });
+    pump();
+  }
+
+  function pump() {
+    Gnomon.montecarlo.step(mcJob, MC_CHUNK);
+    if (mcJob.done) {
+      mcHandle = null;
+      state.uncertainty = Gnomon.montecarlo.finish(mcJob);
+      renderUncertainty(state.uncertainty);
+      if (window.gnomonOnUncertainty) window.gnomonOnUncertainty(state.uncertainty);
+      return;
+    }
+    renderUncertaintyProgress(mcJob);
+    mcHandle = idle(pump);
+  }
+
+  function renderUncertaintyProgress(job) {
+    putRead("elevation", "sampling… " + Math.round((job.completed / job.samples) * 100) + "%");
+  }
+
+  function band(b, unit) {
+    if (!b) return "—";
+    // "We cannot tell" and "we can tell, roughly" are different claims, and the
+    // UI must never render one as the other.
+    if (b.unbounded) return "unbounded";
+    return b.p5.toFixed(1) + "–" + b.p95.toFixed(1) + unit + "  (" + b.p50.toFixed(1) + ")";
+  }
+
+  /* An unbounded azimuth is usually the reference direction's fault, not the
+     shadows'. A reference that recedes from the camera is heavily foreshortened,
+     so a few pixels of marking error swing its ground direction wildly — measured
+     on the fixture, a 121px receding reference gives an unbounded azimuth where a
+     648px one crossing the view lands within a few degrees of truth.
+
+     Saying so turns "unbounded" from something that reads as a broken tool into
+     an instruction. */
+  function renderReferenceAdvice(u) {
+    const note = document.getElementById("bearing-note");
+    const haveReference = state.reference && state.reference.length === 2;
+    if (!haveReference) {
+      note.textContent = "Mark a reference direction to report azimuth against north.";
+      note.className = "note";
+      return;
+    }
+    if (u && u.azimuth && u.azimuth.unbounded) {
+      const length = Math.hypot(
+        state.reference[1][0] - state.reference[0][0],
+        state.reference[1][1] - state.reference[0][1],
+      );
+      note.textContent = "This reference cannot pin the azimuth (" + Math.round(length) +
+        "px long). A direction running across the view rather than away from the camera, " +
+        "marked as long as possible, will narrow it — one receding from the camera is " +
+        "foreshortened, so a few pixels of marking error swing it a long way.";
+      note.className = "note warn";
+      return;
+    }
+    note.textContent = "Azimuth is reported against this direction.";
+    note.className = "note";
+  }
+
+  function renderUncertainty(u) {
+    if (!u) return;
+    renderReferenceAdvice(u);
+    putRead("elevation", u.elevation ? band(u.elevation, "°") : "azimuth-only mode");
+    putRead("azimuth", u.azimuth && u.azimuth.p50 !== null ? band(u.azimuth, "°")
+      : (state.reference && state.reference.length === 2 ? "unbounded" : "needs a reference"));
+    if (u.elevation && !u.elevation.unbounded && u.elevation.p50 > 0) {
+      putRead("multiplier", "×" + (1 / Math.tan((u.elevation.p50 * Math.PI) / 180)).toFixed(3));
+    }
+
+    Gnomon.debug.set("uncertainty", "samples", u.samples + (u.failures ? " (" + u.failures + " degenerate)" : ""));
+    if (u.elevation) {
+      Gnomon.debug.set("uncertainty", "elevation p5/p50/p95",
+        [u.elevation.p5, u.elevation.p50, u.elevation.p95].map(function (n) { return n === null ? "—" : n.toFixed(3); }).join(" / "));
+      Gnomon.debug.set("uncertainty", "elevation unbounded", u.elevation.unbounded);
+    }
+    Gnomon.debug.set("uncertainty", "azimuth p5/p50/p95",
+      [u.azimuth.p5, u.azimuth.p50, u.azimuth.p95].map(function (n) { return n === null ? "—" : n.toFixed(3); }).join(" / "));
+    Gnomon.debug.set("uncertainty", "azimuth unbounded", u.azimuth.unbounded);
+    Gnomon.debug.set("uncertainty", "residual band (noise floor)",
+      [u.residual.p5, u.residual.p50, u.residual.p95].map(function (n) { return n === null ? "—" : n.toFixed(2); }).join(" / "));
+    renderDebug();
   }
 
   window.gnomonOnMarksChanged = recalibrate;

