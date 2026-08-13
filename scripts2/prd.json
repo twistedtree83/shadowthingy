@@ -1,0 +1,183 @@
+{
+  "name": "gnomon",
+  "repoUrl": "https://github.com/twistedtree83/shadowthingy",
+  "branchName": "sprint/gnomon-mvp",
+  "parentIssue": 1,
+  "tasks": [
+    {
+      "id": "G1",
+      "issue": 2,
+      "title": "Scaffold: three-region layout and the debug panel",
+      "passes": false,
+      "afk": true,
+      "depends": []
+    },
+    {
+      "id": "G2",
+      "issue": 3,
+      "title": "Solar engine: NOAA position, six invariants, manual UI",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G1"
+      ]
+    },
+    {
+      "id": "G3",
+      "issue": 4,
+      "title": "Homogeneous geometry kernel: vanishing points and conditioning",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G1"
+      ]
+    },
+    {
+      "id": "G4",
+      "issue": 5,
+      "title": "Synthetic scene generator and the vanishing-point round trip",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G3"
+      ]
+    },
+    {
+      "id": "G5",
+      "issue": 6,
+      "title": "Image, EXIF, and metadata integrity flags",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G1"
+      ]
+    },
+    {
+      "id": "G6",
+      "issue": 7,
+      "title": "Marking: objects, loupe, and the three line families",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G5",
+        "G3"
+      ]
+    },
+    {
+      "id": "G7",
+      "issue": 8,
+      "title": "Calibration cascade: five tiers, fall-through, and disagreement",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G4",
+        "G6"
+      ]
+    },
+    {
+      "id": "G8",
+      "issue": 9,
+      "title": "Sun direction, sign resolution, and the validity residual",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G7"
+      ]
+    },
+    {
+      "id": "G9",
+      "issue": 10,
+      "title": "Monte Carlo uncertainty and the azimuth-only fallback",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G8"
+      ]
+    },
+    {
+      "id": "G10",
+      "issue": 11,
+      "title": "Inverse solve: the global elevation-and-azimuth grid",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G2",
+        "G9"
+      ]
+    },
+    {
+      "id": "G11",
+      "issue": 16,
+      "title": "Map: orthographic globe, bundled coastlines, soft band",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G10"
+      ]
+    },
+    {
+      "id": "G12",
+      "issue": 17,
+      "title": "Time scrubber: the band sweeping across the globe",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G11"
+      ]
+    },
+    {
+      "id": "G13",
+      "issue": 18,
+      "title": "Three modes: Verify, Time, Locate",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G11",
+        "G9"
+      ]
+    },
+    {
+      "id": "G14",
+      "issue": 19,
+      "title": "Guards: low sun, the equinoxes, and a broken residual",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G13"
+      ]
+    },
+    {
+      "id": "G15",
+      "issue": 20,
+      "title": "Report export: one self-contained file that outlives the session",
+      "passes": false,
+      "afk": true,
+      "depends": [
+        "G14"
+      ]
+    },
+    {
+      "id": "G16",
+      "issue": 21,
+      "title": "Visual system: import the Claude Design source",
+      "passes": false,
+      "afk": false,
+      "gate": "design-login",
+      "depends": [
+        "G1"
+      ]
+    },
+    {
+      "id": "G17",
+      "issue": 22,
+      "title": "Tuning and honesty pass",
+      "passes": false,
+      "afk": false,
+      "gate": "human-judgement",
+      "depends": [
+        "G15",
+        "G16"
+      ]
+    }
+  ]
+}

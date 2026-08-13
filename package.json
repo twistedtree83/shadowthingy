@@ -1,0 +1,13 @@
+{
+  "name": "gnomon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Recover the sun's direction from the projective geometry of shadows in a photograph",
+  "scripts": {
+    "test": "node --test",
+    "verify": "npm run test && npm run check:purity && npm run check:network",
+    "check:purity": "node scripts2/check-purity.js",
+    "check:network": "node scripts2/check-network.js"
+  }
+}

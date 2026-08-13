@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+*.log
+
+# Sample imagery used while developing must never be committed — the whole point
+# of the app is that images stay on the machine they were opened on.
+samples/
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.tif
+*.tiff
+
+# Exported reports embed the image as a data URI, so they are images too.
+report-*.html
