@@ -109,7 +109,7 @@
       "id": "G11",
       "issue": 16,
       "title": "Map: orthographic globe, bundled coastlines, soft band",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G10"

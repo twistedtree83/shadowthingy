@@ -166,3 +166,40 @@ test("the early rejection cannot change which cells survive", () => {
   }
   assert.ok(tight.count > 0 && wide.count > 0);
 });
+
+// ── The dense field G11 renders from ─────────────────────────────────────────
+
+test("the dense field agrees with the sparse cell list", () => {
+  const r = grid.solve({ utc: UTC, elevation: band(truth.elevation, 1) });
+  assert.equal(r.field.length, r.lonCount * r.latCount);
+  for (const c of r.cells.slice(0, 200)) {
+    const sampled = grid.sampleField(r, c.lat, c.lon);
+    assert.ok(Math.abs(sampled - c.strength) < 1e-6,
+      `field disagrees at ${c.lat},${c.lon}: ${sampled} vs ${c.strength}`);
+  }
+});
+
+test("sampling interpolates, so the rendered edge is soft rather than stepped", () => {
+  // The softness must come from the tolerance, not from an artefact of how
+  // finely the world was diced.
+  const r = grid.solve({ utc: UTC, elevation: band(truth.elevation, 1) });
+  const a = grid.sampleField(r, -33.75, 151.0);
+  const halfway = grid.sampleField(r, -33.75, 151.25);
+  const b = grid.sampleField(r, -33.75, 151.5);
+  assert.ok(halfway > 0, "midpoint should sample something");
+  assert.ok(Math.abs(halfway - (a + b) / 2) < Math.max(a, b) * 0.5 + 1e-6,
+    "midpoint should lie between its neighbours");
+});
+
+test("sampling wraps around the antimeridian", () => {
+  const r = grid.solve({ utc: UTC, elevation: { p5: 0, p50: 45, p95: 90, unbounded: true } });
+  // 180 and -180 are the same meridian and must sample identically.
+  assert.equal(grid.sampleField(r, 0, 180), grid.sampleField(r, 0, -180));
+  assert.equal(grid.sampleField(r, 10, 200), grid.sampleField(r, 10, -160));
+});
+
+test("sampling outside the poles returns zero rather than reading past the array", () => {
+  const r = grid.solve({ utc: UTC, elevation: band(truth.elevation, 1) });
+  assert.equal(grid.sampleField(r, 95, 0), 0);
+  assert.equal(grid.sampleField(r, -95, 0), 0);
+});

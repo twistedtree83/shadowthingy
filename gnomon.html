@@ -10,6 +10,9 @@
      point there is none. Tile servers are categorically different and are
      forbidden — see scripts2/check-network.js. -->
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-array@3.2.4/dist/d3-array.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-geo@3.1.1/dist/d3-geo.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
 <style>
   /* An instrument, not a dashboard. A number on screen should read as a
      measurement, not as a conclusion — so: monospace numerals, hairline rules,
@@ -65,7 +68,7 @@
   main {
     flex: 1; display: grid;
     grid-template-columns: minmax(0, 1fr) 340px;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) minmax(360px, 42%);
     grid-template-areas: "canvas readout" "result readout";
     min-height: 0;
   }
@@ -94,8 +97,17 @@
   .empty-state .rule { height: 1px; background: var(--rule); margin: 1.25rem auto; width: 4rem; }
   .empty-state small { font-size: 11.5px; line-height: 1.65; display: block; }
 
-  #region-result { padding-bottom: .75rem; min-height: 8rem; }
-  .result-body { padding: .85rem 1rem; color: var(--ink-faint); font-size: 12.5px; }
+  #region-result { min-height: 0; display: flex; flex-direction: column; }
+  .result-split { flex: 1; display: flex; gap: 0; min-height: 0; overflow: hidden; }
+  .result-body { padding: .85rem 1rem; color: var(--ink-faint); font-size: 12.5px; overflow-y: auto; flex: 1; }
+
+  .map-pane {
+    flex-shrink: 0; padding: .5rem .75rem .5rem 1rem;
+    border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: .3rem;
+  }
+  #map-canvas { display: block; cursor: grab; touch-action: none; }
+  #map-canvas:active { cursor: grabbing; }
+  .map-caption { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); text-align: center; }
 
   .readout-group { border-bottom: 1px solid var(--rule); padding: .75rem 1rem .9rem; }
   .readout-group h2 {
@@ -338,9 +350,15 @@
 
   <section id="region-result">
     <div class="region-label">Result</div>
-    <div class="result-body">
-      No image loaded. The result region reports a band, never a point —
-      a stripped or cropped photograph should visibly widen it.
+    <div class="result-split">
+      <div class="map-pane">
+        <canvas id="map-canvas" width="340" height="340"></canvas>
+        <div class="map-caption" id="map-caption">Drag to rotate</div>
+      </div>
+      <div class="result-body">
+        No image loaded. The result region reports a band, never a point —
+        a stripped or cropped photograph should visibly widen it.
+      </div>
     </div>
   </section>
 </main>
@@ -2174,11 +2192,25 @@ var Gnomon = (function () {
          more than refraction's largest possible contribution. */
       const rejectBeyond = elevationUnbounded ? Infinity : 1.5 * eHalf + 0.7;
 
+      const latCount = Math.round(180 / latStep) + 1;
+      const lonCount = columns.length;
+
+      /* A dense strength field alongside the sparse cell list.
+
+         G11 renders the band by inverse-projecting each screen pixel and
+         sampling this, rather than drawing one rectangle per cell — which keeps
+         the cost proportional to the size of the map instead of to how much of
+         the world qualifies. An unbounded band covers 260k cells and would be
+         unusable drawn cell by cell. */
+      const field = new Float32Array(lonCount * latCount);
+
       const cells = [];
       let evaluated = 0;
 
-      for (let lat = -90; lat <= 90 + 1e-9; lat += latStep) {
+      for (let latIndex = 0; latIndex < latCount; latIndex++) {
+        const lat = -90 + latIndex * latStep;
         const r = solar.row(context.declination, lat);
+        const rowBase = latIndex * lonCount;
         for (let i = 0; i < columns.length; i++) {
           const col = columns[i];
           evaluated++;
@@ -2204,6 +2236,7 @@ var Gnomon = (function () {
             if (strength < FLOOR) continue;
           }
 
+          field[rowBase + i] = strength;
           cells.push({ lon: col.lon, lat: lat, strength: strength });
         }
       }
@@ -2212,6 +2245,9 @@ var Gnomon = (function () {
         cells: cells,
         count: cells.length,
         evaluated: evaluated,
+        field: field,
+        lonCount: lonCount,
+        latCount: latCount,
         lonStep: lonStep,
         latStep: latStep,
         context: context,
@@ -2243,6 +2279,30 @@ var Gnomon = (function () {
       return strength;
     }
 
+    /* Bilinear sample of the dense field. Interpolating rather than picking the
+       nearest cell is what makes the rendered edge genuinely soft instead of
+       stepped at the grid resolution — the softness has to come from the
+       tolerance, not from an artefact of how finely the world was diced. */
+    function sampleField(result, latitude, longitude) {
+      const lon = ((longitude + 180) % 360 + 360) % 360 - 180;
+      const x = (lon + 180) / result.lonStep;
+      const y = (latitude + 90) / result.latStep;
+      if (y < 0 || y > result.latCount - 1) return 0;
+
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const fx = x - x0, fy = y - y0;
+      const x1 = (x0 + 1) % result.lonCount;
+      const y1 = Math.min(y0 + 1, result.latCount - 1);
+      const wrapped = ((x0 % result.lonCount) + result.lonCount) % result.lonCount;
+
+      const f = result.field;
+      const a = f[y0 * result.lonCount + wrapped];
+      const b = f[y0 * result.lonCount + x1];
+      const c = f[y1 * result.lonCount + wrapped];
+      const d = f[y1 * result.lonCount + x1];
+      return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+    }
+
     return {
       LON_STEP: LON_STEP,
       LAT_STEP: LAT_STEP,
@@ -2251,6 +2311,7 @@ var Gnomon = (function () {
       at: at,
       solve: solve,
       strengthAt: strengthAt,
+      sampleField: sampleField,
     };
   })();
 
@@ -3423,6 +3484,228 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   // Exposed so later slices re-render the panel after they compute.
   window.gnomonRenderDebug = renderDebug;
   window.gnomonRenderSolar = renderSolar;
+
+
+  /* ── the map ───────────────────────────────────────────────────────────────
+     An orthographic globe over bundled Natural Earth coastlines, draggable to
+     rotate, with the band drawn as a soft-edged raster.
+
+     THERE IS NO TILE SERVER, and that is the point rather than a limitation.
+     Tiles are requested per-viewport AFTER the analysis, so the sequence of
+     requests IS the region of interest — frequently the most sensitive fact in
+     the whole investigation, handed to a third party as a side effect of
+     looking at the result. The coastline file is fetched once at load, before
+     any image exists, identically for every user. scripts2/check-network.js
+     fails the build on a tile URL template or a tile-based library. */
+  const LAND_URL = "https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/land-110m.json";
+
+  const mapCanvas = document.getElementById("map-canvas");
+  const mapCaption = document.getElementById("map-caption");
+  const mapSize = mapCanvas.width;
+
+  let land = null;
+  let landError = null;
+  const rotation = [-151, 34];   // start looking at the fixture's claimed place
+  let mapDragging = null;
+
+  const projection = window.d3 && window.d3.geoOrthographic
+    ? window.d3.geoOrthographic()
+        .translate([mapSize / 2, mapSize / 2])
+        .scale(mapSize / 2 - 6)
+        .clipAngle(90)
+    : null;
+
+  function loadLand() {
+    if (!window.topojson || !projection) {
+      landError = "map libraries unavailable";
+      drawMap();
+      return;
+    }
+    fetch(LAND_URL)
+      .then(function (r) { return r.json(); })
+      .then(function (topo) {
+        land = window.topojson.feature(topo, topo.objects.land);
+        drawMap();
+      })
+      .catch(function () {
+        // The globe still works without coastlines — the band is the finding,
+        // the coastlines are orientation. Saying so beats a blank panel.
+        landError = "coastlines unavailable offline";
+        drawMap();
+      });
+  }
+
+  /* The band is rendered by inverse-projecting every screen pixel and sampling
+     the strength field, rather than by drawing one shape per qualifying cell.
+
+     Two reasons. An unbounded band covers 260k cells and would be unusable
+     drawn cell by cell. And bilinear sampling makes the edge genuinely soft,
+     where per-cell rectangles would step at the grid resolution — the softness
+     has to come from the tolerance, not from how finely the world was diced. */
+  /* The band is painted into an offscreen canvas and then composited with
+     drawImage, NOT written straight to the visible context with putImageData.
+
+     putImageData REPLACES pixels — it ignores alpha blending entirely — so
+     writing the band directly erased the globe and coastlines beneath it and
+     left transparent holes showing the page background. The result looked like
+     an empty ocean and was very nearly shipped that way. */
+  const bandLayer = document.createElement("canvas");
+  bandLayer.width = mapSize;
+  bandLayer.height = mapSize;
+
+  function paintBand(ctx, result) {
+    const layerCtx = bandLayer.getContext("2d");
+    const image = layerCtx.createImageData(mapSize, mapSize);
+    const data = image.data;
+    // The accent, as the band colour.
+    const R = 224, G = 164, B = 76;
+
+    for (let py = 0; py < mapSize; py++) {
+      for (let px = 0; px < mapSize; px++) {
+        const inverted = projection.invert([px + 0.5, py + 0.5]);
+        if (!inverted) continue;
+        const strength = Gnomon.grid.sampleField(result, inverted[1], inverted[0]);
+        if (strength <= 0) continue;
+        const i = (py * mapSize + px) * 4;
+        data[i] = R; data[i + 1] = G; data[i + 2] = B;
+        // Capped below opaque so the coastline beneath stays readable through
+        // the band — a solid patch would hide exactly the context that makes
+        // the result mean anything.
+        data[i + 3] = Math.round(Math.min(1, strength) * 200);
+      }
+    }
+    layerCtx.putImageData(image, 0, 0);
+    ctx.drawImage(bandLayer, 0, 0);
+  }
+
+  function drawMap() {
+    if (!projection) return;
+    const ctx = mapCanvas.getContext("2d");
+    projection.rotate(rotation);
+
+    ctx.clearRect(0, 0, mapSize, mapSize);
+
+    // The globe itself.
+    ctx.beginPath();
+    ctx.arc(mapSize / 2, mapSize / 2, mapSize / 2 - 6, 0, Math.PI * 2);
+    ctx.fillStyle = "#0d1116";
+    ctx.fill();
+
+    const path = window.d3.geoPath(projection, ctx);
+
+    /* Land needs enough contrast against the ocean to actually orient the
+       reader — the coastlines are what turn a coloured arc into "somewhere in
+       the Tasman Sea". A first pass drew them at #242b32 on #12161b and they
+       were invisible, which made the globe decorative rather than useful. */
+    if (land) {
+      ctx.beginPath();
+      path(land);
+      ctx.fillStyle = "#333e49";
+      ctx.fill();
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = "#5d6b78";
+      ctx.stroke();
+    }
+
+    if (state.band) paintBand(ctx, state.band);
+
+    // Graticule after the band, so the grid stays legible through it.
+    if (window.d3.geoGraticule) {
+      ctx.beginPath();
+      path(window.d3.geoGraticule().step([30, 30])());
+      ctx.lineWidth = 0.4;
+      ctx.strokeStyle = "rgba(139,147,157,.28)";
+      ctx.stroke();
+    }
+
+    // The claimed location, when there is one, so a reader can see at a glance
+    // whether it falls inside the band.
+    const claim = claimedPlace();
+    if (claim) {
+      const projected = projection([claim.longitude, claim.latitude]);
+      const visible = projected && window.d3.geoDistance(
+        [claim.longitude, claim.latitude], [-rotation[0], -rotation[1]],
+      ) < Math.PI / 2;
+      if (visible) {
+        ctx.beginPath();
+        ctx.arc(projected[0], projected[1], 4, 0, Math.PI * 2);
+        ctx.strokeStyle = "#d6dae0";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+
+    ctx.beginPath();
+    ctx.arc(mapSize / 2, mapSize / 2, mapSize / 2 - 6, 0, Math.PI * 2);
+    ctx.strokeStyle = "#2a2f36";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    mapCaption.textContent = landError ? landError
+      : state.band
+        ? (state.band.unbounded ? "band unbounded — drag to rotate"
+           : state.band.count.toLocaleString() + " cells fit — drag to rotate")
+        : "drag to rotate";
+  }
+
+  function claimedPlace() {
+    const lat = Number(document.getElementById("in-lat").value);
+    const lon = Number(document.getElementById("in-lon").value);
+    return Number.isFinite(lat) && Number.isFinite(lon) ? { latitude: lat, longitude: lon } : null;
+  }
+
+  mapCanvas.addEventListener("pointerdown", function (event) {
+    mapDragging = { x: event.clientX, y: event.clientY, rotation: rotation.slice() };
+    mapCanvas.setPointerCapture(event.pointerId);
+  });
+  mapCanvas.addEventListener("pointermove", function (event) {
+    if (!mapDragging) return;
+    const k = 0.35;
+    rotation[0] = mapDragging.rotation[0] + (event.clientX - mapDragging.x) * k;
+    // Clamped so the globe cannot be tumbled past the poles into a state the
+    // user has to fight their way out of.
+    rotation[1] = Math.max(-90, Math.min(90, mapDragging.rotation[1] - (event.clientY - mapDragging.y) * k));
+    drawMap();
+  });
+  const endMapDrag = function () { mapDragging = null; };
+  mapCanvas.addEventListener("pointerup", endMapDrag);
+  mapCanvas.addEventListener("pointercancel", endMapDrag);
+
+  /* The inverse solve, run from the measured band. The UTC instant comes from
+     the claimed local time minus its offset — the same instant everywhere,
+     which is what makes a global sweep meaningful. */
+  function solveBand(uncertainty) {
+    const args = readSolarInputs();
+    if (!args || !uncertainty) { state.band = null; drawMap(); return null; }
+
+    const utcMinutes = args.minutes - args.tzOffsetHours * 60;
+    const band = Gnomon.grid.solve({
+      utc: { year: args.year, month: args.month, day: args.day, minutes: utcMinutes },
+      elevation: uncertainty.elevation,
+      azimuth: uncertainty.azimuth,
+    });
+    state.band = band;
+
+    Gnomon.debug.set("inverse solve", "cells", band.count + " of " + band.evaluated);
+    Gnomon.debug.set("inverse solve", "elevation band unbounded", band.unbounded);
+    Gnomon.debug.set("inverse solve", "azimuth applied", band.azimuthApplied);
+    const claim = claimedPlace();
+    if (claim) {
+      Gnomon.debug.set("inverse solve", "claimed place strength",
+        Gnomon.grid.strengthAt(band, claim.latitude, claim.longitude).toFixed(3));
+    }
+    drawMap();
+    renderDebug();
+    return band;
+  }
+
+  window.gnomonOnUncertainty = solveBand;
+  window.gnomonDrawMap = drawMap;
+  window.gnomonMapState = function () {
+    return { land: !!land, landError: landError, rotation: rotation.slice(), projection: !!projection };
+  };
+  window.gnomonSolveBand = solveBand;
+  loadLand();
 
   Gnomon.debug.set("session", "core version", Gnomon.version);
   renderSolar();
