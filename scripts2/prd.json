@@ -8,7 +8,7 @@
       "id": "G1",
       "issue": 2,
       "title": "Scaffold: three-region layout and the debug panel",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": []
     },

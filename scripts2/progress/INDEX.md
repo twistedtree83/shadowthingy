@@ -4,7 +4,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 
 | ID | Issue | Task | AFK | Status |
 |----|-------|------|-----|--------|
-| G1  | #2  | Scaffold: three-region layout and the debug panel | yes | pending |
+| G1  | #2  | Scaffold: three-region layout and the debug panel | yes | **shipped** — [G1.md](G1.md) |
 | G2  | #3  | Solar engine: NOAA position, six invariants, manual UI | yes | pending |
 | G3  | #4  | Homogeneous geometry kernel: vanishing points and conditioning | yes | pending |
 | G4  | #5  | Synthetic scene generator and the vanishing-point round trip | yes | pending |
