@@ -1104,29 +1104,71 @@ var Gnomon = (function () {
       return { jd: jd, T: (jd - 2451545) / 36525 };
     }
 
-    function position(args) {
-      const time = centuries(args);
-      const eph = ephemeris(time.T);
-      const phi = args.latitude;
-      const delta = eph.declination;
+    /* Where the sun sits, given the declination and hour angle already worked
+       out. Split from `position` so the inverse solve can hoist the
+       instant-only half out of a 500k-cell loop — the declination and equation
+       of time do not depend on where you are standing, and recomputing them per
+       cell is most of the cost. Sharing this keeps one implementation of the
+       maths rather than a fast copy that can drift from the real one. */
+    /* A latitude's share of the calculation, precomputed.
 
-      // True solar time, then the hour angle: 0 at solar noon, negative before.
-      const tst = args.minutes + eph.equationOfTime + 4 * args.longitude - 60 * args.tzOffsetHours;
-      const H = tst / 4 - 180;
+       Sweeping a global grid asks the same question at 720 longitudes for each
+       latitude, and sin/cos of the declination and latitude are identical
+       across all of them. Hoisting them turns the inner loop into four
+       multiplies. `look` is written in terms of this, so the fast path and the
+       ordinary one are the same arithmetic rather than a copy that can drift. */
+    function row(delta, phi) {
+      const sd = sin(delta), cd = cos(delta);
+      const sp = sin(phi), cp = cos(phi);
+      const td = tan(delta);
+      return {
+        // Geometric elevation only — refraction is the expensive part and the
+        // caller may want to reject a cell before paying for it.
+        sinAltitude: function (cosH) { return sp * sd + cp * cd * cosH; },
+        azimuth: function (sinH, cosH) {
+          return mod360(Math.atan2(-sinH, td * cp - sp * cosH) * R2D);
+        },
+      };
+    }
 
-      const sinAlt = sin(phi) * sin(delta) + cos(phi) * cos(delta) * cos(H);
+    function look(delta, phi, H) {
+      const r = row(delta, phi);
+      const sinAlt = r.sinAltitude(cos(H));
       const elevationTrue = Math.asin(Math.max(-1, Math.min(1, sinAlt))) * R2D;
       const bend = refraction(elevationTrue);
-      const elevation = elevationTrue + bend;
 
       // From north, clockwise. At solar noon H = 0, so this reduces to
       // atan2(0, tanδ·cosφ − sinφ): negative x gives 180° in the northern
       // hemisphere and positive x gives 0° in the southern. That flip is the
       // whole hemisphere question, and it falls out of the formula rather than
       // out of a branch.
-      const azimuth = mod360(
-        Math.atan2(-sin(H), tan(delta) * cos(phi) - sin(phi) * cos(H)) * R2D,
-      );
+      return {
+        elevationTrue: elevationTrue,
+        refraction: bend,
+        elevation: elevationTrue + bend,
+        azimuth: r.azimuth(sin(H), cos(H)),
+      };
+    }
+
+    // The hour angle at a longitude, for an instant whose equation of time is
+    // already known. Zero at solar noon, negative before it.
+    function hourAngle(minutes, equationOfTime, longitude, tzOffsetHours) {
+      return (minutes + equationOfTime + 4 * longitude - 60 * tzOffsetHours) / 4 - 180;
+    }
+
+    function position(args) {
+      const time = centuries(args);
+      const eph = ephemeris(time.T);
+      const phi = args.latitude;
+      const delta = eph.declination;
+
+      const H = hourAngle(args.minutes, eph.equationOfTime, args.longitude, args.tzOffsetHours);
+      const tst = (H + 180) * 4;
+      const seen = look(delta, phi, H);
+      const elevationTrue = seen.elevationTrue;
+      const bend = seen.refraction;
+      const elevation = seen.elevation;
+      const azimuth = seen.azimuth;
 
       return {
         julianDay: time.jd,
@@ -1189,6 +1231,10 @@ var Gnomon = (function () {
       dateFromDayOfYear: dateFromDayOfYear,
       refraction: refraction,
       ephemeris: ephemeris,
+      centuries: centuries,
+      row: row,
+      look: look,
+      hourAngle: hourAngle,
       position: position,
       solarNoonMinutes: solarNoonMinutes,
       sunTimes: sunTimes,
@@ -2025,6 +2071,189 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── grid ────────────────────────────────────────────────────────────────
+     The inverse solve. At a claimed instant, walk the world and keep the places
+     where the sun would have been where the shadows say it was.
+
+     Brute force is the right call and the reason belongs here so a later slice
+     does not "optimise" it into something narrower: an analytic solution for
+     the elevation contour exists, but the grid extends to the two-constraint
+     case, the soft-edged tolerance region and the time scrubber without
+     becoming a different algorithm each time.
+
+     The one optimisation applied is hoisting the instant-only half of the solar
+     calculation — declination and equation of time do not depend on where you
+     are standing. That composes solar.look() rather than reimplementing it, so
+     there is no fast copy that can drift from the real one.
+     ──────────────────────────────────────────────────────────────────────── */
+  const grid = (function () {
+    const LON_STEP = 0.5;
+    const LAT_STEP = 0.25;
+
+    // A p5–p95 interval is a 90% band, so the half-width is about 1.645 sigma
+    // if the distribution is roughly normal. Treating it that way gives the
+    // soft edge for free and from a real assumption rather than a chosen curve.
+    const SIGMA_PER_HALFWIDTH = 1 / 1.645;
+
+    // Below this, a cell contributes nothing a reader could see; keeping it
+    // would only make the list longer.
+    const FLOOR = 0.05;
+
+    function contextFor(utc) {
+      const eph = solar.ephemeris(solar.centuries({
+        year: utc.year, month: utc.month, day: utc.day,
+        minutes: utc.minutes, tzOffsetHours: 0,
+      }).T);
+      return { utc: utc, declination: eph.declination, equationOfTime: eph.equationOfTime };
+    }
+
+    // The sun at one place, for the instant this context was built for.
+    function at(context, latitude, longitude) {
+      const H = solar.hourAngle(context.utc.minutes, context.equationOfTime, longitude, 0);
+      return solar.look(context.declination, latitude, H);
+    }
+
+    function gaussianStrength(value, centre, halfWidth) {
+      if (!(halfWidth > 0)) return value === centre ? 1 : 0;
+      const sigma = halfWidth * SIGMA_PER_HALFWIDTH;
+      const z = (value - centre) / sigma;
+      return Math.exp(-0.5 * z * z);
+    }
+
+    // Angles need the shortest way round, or a band straddling the 0/360 seam
+    // silently matches nothing.
+    function angularStrength(value, centre, halfWidth) {
+      if (!(halfWidth > 0)) return 1;
+      const delta = ((value - centre + 540) % 360) - 180;
+      const sigma = halfWidth * SIGMA_PER_HALFWIDTH;
+      const z = delta / sigma;
+      return Math.exp(-0.5 * z * z);
+    }
+
+    function centreOf(b) {
+      if (b.p50 !== undefined && b.p50 !== null) return b.p50;
+      return (b.p5 + b.p95) / 2;
+    }
+
+    // Half-width across the 0/360 seam, so an azimuth band like 355–5 reads as
+    // 5 degrees wide rather than 175.
+    function angularHalfWidth(b) {
+      const centre = centreOf(b);
+      const lo = Math.abs(((b.p5 - centre + 540) % 360) - 180);
+      const hi = Math.abs(((b.p95 - centre + 540) % 360) - 180);
+      return Math.max(lo, hi);
+    }
+
+    function solve(input) {
+      const lonStep = input.lonStep || LON_STEP;
+      const latStep = input.latStep || LAT_STEP;
+      const context = contextFor(input.utc);
+
+      const elevation = input.elevation;
+      const elevationUnbounded = !elevation || elevation.unbounded === true;
+      const eCentre = elevationUnbounded ? null : centreOf(elevation);
+      const eHalf = elevationUnbounded ? null : Math.max(1e-6, (elevation.p95 - elevation.p5) / 2);
+
+      const azimuth = input.azimuth;
+      const azimuthApplied = !!azimuth && azimuth.unbounded !== true;
+      const aCentre = azimuthApplied ? centreOf(azimuth) : null;
+      const aHalf = azimuthApplied ? Math.max(1e-6, angularHalfWidth(azimuth)) : null;
+
+      /* Longitude only enters through the hour angle, so its sine and cosine
+         are computed once per column instead of once per cell. */
+      const columns = [];
+      for (let lon = -180; lon < 180; lon += lonStep) {
+        const H = (solar.hourAngle(context.utc.minutes, context.equationOfTime, lon, 0) * Math.PI) / 180;
+        columns.push({ lon: lon, sinH: Math.sin(H), cosH: Math.cos(H) });
+      }
+
+      /* Beyond this the Gaussian has already fallen below FLOOR, so the cell
+         cannot contribute however the refraction lands. Rejecting on the
+         GEOMETRIC elevation lets the expensive refraction fit be skipped for
+         the overwhelming majority of the world — with a margin of 0.7°, safely
+         more than refraction's largest possible contribution. */
+      const rejectBeyond = elevationUnbounded ? Infinity : 1.5 * eHalf + 0.7;
+
+      const cells = [];
+      let evaluated = 0;
+
+      for (let lat = -90; lat <= 90 + 1e-9; lat += latStep) {
+        const r = solar.row(context.declination, lat);
+        for (let i = 0; i < columns.length; i++) {
+          const col = columns[i];
+          evaluated++;
+
+          const sinAlt = r.sinAltitude(col.cosH);
+          const elevationTrue = Math.asin(Math.max(-1, Math.min(1, sinAlt))) * (180 / Math.PI);
+
+          /* An unbounded elevation means "we cannot tell", which must admit the
+             whole daylit world rather than nothing — an empty map would read as
+             "nowhere on Earth fits", the opposite of what it means. */
+          let strength;
+          if (elevationUnbounded) {
+            if (elevationTrue <= 0) continue;
+            strength = 1;
+          } else {
+            if (Math.abs(elevationTrue - eCentre) > rejectBeyond) continue;
+            strength = gaussianStrength(elevationTrue + solar.refraction(elevationTrue), eCentre, eHalf);
+            if (strength < FLOOR) continue;
+          }
+
+          if (azimuthApplied) {
+            strength *= angularStrength(r.azimuth(col.sinH, col.cosH), aCentre, aHalf);
+            if (strength < FLOOR) continue;
+          }
+
+          cells.push({ lon: col.lon, lat: lat, strength: strength });
+        }
+      }
+
+      return {
+        cells: cells,
+        count: cells.length,
+        evaluated: evaluated,
+        lonStep: lonStep,
+        latStep: latStep,
+        context: context,
+        elevation: elevation || null,
+        azimuth: azimuthApplied ? azimuth : null,
+        unbounded: elevationUnbounded,
+        azimuthApplied: azimuthApplied,
+      };
+    }
+
+    // The membership of an arbitrary point, computed the same way the grid does
+    // — so a caller can ask "is this place in the band?" without hunting for
+    // the nearest cell and inheriting the grid's resolution as an error.
+    function strengthAt(result, latitude, longitude) {
+      const seen = at(result.context, latitude, longitude);
+      let strength;
+      if (result.unbounded) {
+        strength = seen.elevation > 0 ? 1 : 0;
+      } else {
+        const centre = centreOf(result.elevation);
+        const half = Math.max(1e-6, (result.elevation.p95 - result.elevation.p5) / 2);
+        strength = gaussianStrength(seen.elevation, centre, half);
+      }
+      if (strength < FLOOR) return 0;
+      if (result.azimuthApplied) {
+        strength *= angularStrength(seen.azimuth, centreOf(result.azimuth), Math.max(1e-6, angularHalfWidth(result.azimuth)));
+        if (strength < FLOOR) return 0;
+      }
+      return strength;
+    }
+
+    return {
+      LON_STEP: LON_STEP,
+      LAT_STEP: LAT_STEP,
+      FLOOR: FLOOR,
+      contextFor: contextFor,
+      at: at,
+      solve: solve,
+      strengthAt: strengthAt,
+    };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -2127,7 +2356,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.8.0",
+    version: "0.9.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -2137,6 +2366,7 @@ var Gnomon = (function () {
     calib: calib,
     sun: sun,
     montecarlo: montecarlo,
+    grid: grid,
     synth: synth,
   };
 })();

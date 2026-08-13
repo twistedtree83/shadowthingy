@@ -98,7 +98,7 @@
       "id": "G10",
       "issue": 11,
       "title": "Inverse solve: the global elevation-and-azimuth grid",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G2",
