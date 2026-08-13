@@ -168,7 +168,57 @@
   .note { margin: .5rem 0 0; font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
   .note.warn { color: var(--accent); }
 
+  /* Three families, three colours. They have to be distinguishable at a glance
+     while overlaying a photograph of arbitrary content, so: cool for the
+     verticals, green for the ground, and the accent for the rays. */
+  :root {
+    --vertical: #7fb2e5;
+    --shadow-line: #86c98b;
+    --ray: #e0a44c;
+  }
+
+  .mark-toolbar {
+    display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+    padding: .4rem 1rem; border-bottom: 1px solid var(--rule);
+  }
+  .mark-toolbar button {
+    background: var(--raised); border: 1px solid var(--rule); color: var(--ink-dim);
+    font: inherit; font-size: 11px; padding: .2rem .5rem; border-radius: 2px; cursor: pointer;
+  }
+  .mark-toolbar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .mark-toolbar button:disabled { opacity: .4; cursor: default; }
+  .mark-toolbar .prompt {
+    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+  }
+  .mark-toolbar .prompt b { color: var(--accent); font-weight: 600; }
+  .mark-toolbar .swatch { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .25rem; }
+
   .canvas-stage.dragover { outline: 1px dashed var(--accent); outline-offset: -8px; }
+  .canvas-stage.marking { cursor: crosshair; }
+
+  /* The loupe. Placing a mark on the actual shadow tip rather than
+     approximately near it is worth a few pixels of accuracy in every
+     downstream angle, and a shadow tip is a soft edge at the best of times. */
+  #loupe {
+    position: fixed; width: 140px; height: 140px; border-radius: 50%;
+    border: 1px solid var(--rule); box-shadow: 0 4px 16px rgba(0,0,0,.55);
+    pointer-events: none; display: none; z-index: 30; overflow: hidden;
+    background: var(--panel);
+  }
+  #loupe.live { display: block; }
+  #loupe canvas { display: block; width: 100%; height: 100%; }
+
+  .object-row {
+    display: flex; align-items: baseline; gap: .5rem; padding: .12rem 0;
+    font-family: var(--mono); font-size: 11px;
+  }
+  .object-row .idx { color: var(--accent); width: 1.4rem; flex-shrink: 0; }
+  .object-row .coords { color: var(--ink-faint); flex: 1; }
+  .object-row button {
+    background: none; border: none; color: var(--ink-faint); cursor: pointer;
+    font: inherit; font-size: 11px; padding: 0 .2rem;
+  }
+  .object-row button:hover { color: var(--bad); }
   #image-canvas { max-width: 100%; max-height: 100%; display: block; object-fit: contain; }
   .stage-wrap { position: relative; display: none; max-width: 100%; max-height: 100%; }
   .stage-wrap.live { display: block; }
@@ -203,6 +253,14 @@
 <main>
   <section id="region-canvas">
     <div class="region-label">Image</div>
+    <div class="mark-toolbar" id="mark-toolbar">
+      <button id="mode-object" aria-pressed="true"><span class="swatch" style="background:var(--ray)"></span>Objects</button>
+      <button id="mode-reference">Reference direction</button>
+      <button id="mode-rectangle">Scene rectangle</button>
+      <button id="undo-mark">Undo</button>
+      <button id="clear-marks">Clear</button>
+      <span class="prompt" id="mark-prompt">Load an image to begin</span>
+    </div>
     <div class="canvas-stage" id="canvas-stage">
       <div class="empty-state" id="empty-state">
         <strong>Drop a photograph here</strong>
@@ -219,6 +277,7 @@
            loader. -->
       <input type="file" id="file-input" accept="image/*" hidden>
     </div>
+    <div id="loupe"><canvas id="loupe-canvas" width="140" height="140"></canvas></div>
   </section>
 
   <section id="region-readout">
@@ -255,6 +314,18 @@
       <div class="reading"><span class="k">Solar noon</span><span class="v" data-solar="noon">—</span></div>
       <div class="reading"><span class="k">Sunrise / sunset</span><span class="v" data-solar="daylight">—</span></div>
       <p class="note" id="solar-note"></p>
+    </div>
+
+    <div class="readout-group" id="marks-panel">
+      <h2>Marked objects</h2>
+      <div id="object-list"><p class="note">None yet. Three clicks each: base, top, shadow tip.</p></div>
+      <div class="reading" style="margin-top:.45rem">
+        <span class="k">Reference bearing</span>
+        <span class="v"><input type="number" id="in-bearing" value="0" step="1" min="0" max="360"
+          style="width:5rem;background:var(--raised);border:1px solid var(--rule);color:var(--ink);
+                 padding:.1rem .3rem;font-size:11.5px;border-radius:2px" disabled></span>
+      </div>
+      <p class="note" id="bearing-note">Mark a reference direction to report azimuth against north.</p>
     </div>
 
     <div class="readout-group">
@@ -608,6 +679,35 @@ var Gnomon = (function () {
       };
     }
 
+    /* Unit direction in which to draw a dashed extension from `from`, given
+       that the segment ran `other` → `from` and its family converges at `vp`.
+
+       For a finite vanishing point the answer is simply "toward it" — including
+       when it lies behind the segment, because the dashed line's job is to
+       reach the convergence point, and drawing it the other way would show
+       lines that never meet and imply a disagreement that is not there.
+
+       For a vanishing point at infinity both directions along the line reach
+       it, so the tie is broken by continuing the segment rather than doubling
+       back over it. */
+    function extensionDirection(from, other, vp) {
+      const along = [from[0] - other[0], from[1] - other[1]];
+      if (Math.hypot(along[0], along[1]) === 0) return null;
+
+      if (Math.abs(unit(vp)[2]) <= EPS_INFINITY) {
+        const n = Math.hypot(vp[0], vp[1]);
+        if (n === 0) return null;
+        let dir = [vp[0] / n, vp[1] / n];
+        if (dir[0] * along[0] + dir[1] * along[1] < 0) dir = [-dir[0], -dir[1]];
+        return dir;
+      }
+
+      const toward = [vp[0] / vp[2] - from[0], vp[1] / vp[2] - from[1]];
+      const n = Math.hypot(toward[0], toward[1]);
+      if (n === 0) return null;
+      return [toward[0] / n, toward[1] / n];
+    }
+
     return {
       EPS_INFINITY: EPS_INFINITY,
       CONDITION_LIMIT: CONDITION_LIMIT,
@@ -616,6 +716,7 @@ var Gnomon = (function () {
       atInfinity: atInfinity, dehomogenise: dehomogenise, magnitude: magnitude,
       normaliser: normaliser, jacobiEigen: jacobiEigen,
       vanishingPoint: vanishingPoint,
+      extensionDirection: extensionDirection,
     };
   })();
 
@@ -1579,10 +1680,19 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   function drawOriented(source, orientation) {
     const swap = orientation >= 5 && orientation <= 8;
     const w = source.width, h = source.height;
-    imageCanvas.width = swap ? h : w;
-    imageCanvas.height = swap ? w : h;
 
-    const ctx = imageCanvas.getContext("2d");
+    /* The oriented image is kept in an offscreen canvas rather than drawn
+       straight to the visible one. Marks are redrawn constantly during a drag,
+       and re-decoding the file each time would be unusable — this way a redraw
+       is one blit plus the overlay. */
+    const base = document.createElement("canvas");
+    base.width = swap ? h : w;
+    base.height = swap ? w : h;
+    state.baseCanvas = base;
+    imageCanvas.width = base.width;
+    imageCanvas.height = base.height;
+
+    const ctx = base.getContext("2d");
     ctx.save();
     switch (orientation) {
       case 2: ctx.translate(w, 0); ctx.scale(-1, 1); break;
@@ -1596,7 +1706,8 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     }
     ctx.drawImage(source, 0, 0);
     ctx.restore();
-    return { width: imageCanvas.width, height: imageCanvas.height };
+    imageCanvas.getContext("2d").drawImage(base, 0, 0);
+    return { width: base.width, height: base.height };
   }
 
   function renderFlags(analysis) {
@@ -1694,6 +1805,14 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     emptyState.style.display = "none";
     stageWrap.classList.add("live");
+    stage.classList.add("marking");
+
+    // A new image invalidates every mark — they were placed in the old frame's
+    // coordinates and would be silently wrong in this one.
+    state.objects = [];
+    state.pending = {};
+    state.reference = null;
+    state.rectangle = [];
 
     putRead("dimensions", size.width + " × " + size.height);
     putRead("captured", analysis.capture
@@ -1706,6 +1825,8 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     renderFlags(analysis);
     prefillFrom(analysis);
+    renderMarks();
+    redraw();
 
     Gnomon.debug.set("image", "decoded", size.width + "×" + size.height);
     Gnomon.debug.set("image", "exif orientation", orientation);
@@ -1738,6 +1859,393 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (file) loadFile(file);
   });
+
+  /* ── marking ───────────────────────────────────────────────────────────────
+     An object is three clicks — base, top, shadow tip — and yields three
+     segments: the vertical (base→top), the shadow (base→tip), and the ray
+     (top→tip). Two objects is the minimum; three or more admits a least-squares
+     fit and a meaningful condition number, so adding another is made to feel
+     like the obvious next step rather than an advanced option. */
+  const MARK_ORDER = ["base", "top", "tip"];
+  const MARK_LABEL = { base: "base", top: "top", tip: "shadow tip" };
+  const HIT_RADIUS = 11;
+
+  state.objects = [];
+  state.pending = {};
+  state.reference = null;
+  state.rectangle = [];
+  state.mode = "object";
+  state.drag = null;
+  state.baseCanvas = null;
+
+  const loupe = document.getElementById("loupe");
+  const loupeCanvas = document.getElementById("loupe-canvas");
+  const markPrompt = document.getElementById("mark-prompt");
+  const objectList = document.getElementById("object-list");
+  const bearingInput = document.getElementById("in-bearing");
+
+  function nextSlot() {
+    for (const key of MARK_ORDER) if (!state.pending[key]) return key;
+    return null;
+  }
+
+  function toImage(event) {
+    const rect = imageCanvas.getBoundingClientRect();
+    return [
+      (event.clientX - rect.left) * (imageCanvas.width / rect.width),
+      (event.clientY - rect.top) * (imageCanvas.height / rect.height),
+    ];
+  }
+
+  // Hit-testing happens in DISPLAY pixels, not image pixels: the grab radius
+  // should feel the same whether the image is shown at 1:1 or scaled to a third.
+  function hitTest(event) {
+    const rect = imageCanvas.getBoundingClientRect();
+    const scale = rect.width / imageCanvas.width;
+    let best = null, bestDistance = HIT_RADIUS;
+
+    const consider = function (point, target) {
+      const dx = (rect.left + point[0] * scale) - event.clientX;
+      const dy = (rect.top + point[1] * scale) - event.clientY;
+      const d = Math.hypot(dx, dy);
+      if (d < bestDistance) { bestDistance = d; best = target; }
+    };
+
+    state.objects.forEach(function (obj, i) {
+      for (const key of MARK_ORDER) consider(obj[key], { kind: "object", index: i, key: key });
+    });
+    for (const key of MARK_ORDER) {
+      if (state.pending[key]) consider(state.pending[key], { kind: "pending", key: key });
+    }
+    if (state.reference) {
+      state.reference.forEach(function (p, i) { consider(p, { kind: "reference", index: i }); });
+    }
+    state.rectangle.forEach(function (p, i) { consider(p, { kind: "rectangle", index: i }); });
+    return best;
+  }
+
+  function pointFor(target) {
+    if (target.kind === "object") return state.objects[target.index][target.key];
+    if (target.kind === "pending") return state.pending[target.key];
+    if (target.kind === "reference") return state.reference[target.index];
+    return state.rectangle[target.index];
+  }
+
+  function setPointFor(target, point) {
+    if (target.kind === "object") state.objects[target.index][target.key] = point;
+    else if (target.kind === "pending") state.pending[target.key] = point;
+    else if (target.kind === "reference") state.reference[target.index] = point;
+    else state.rectangle[target.index] = point;
+  }
+
+  // Vanishing points for whatever is currently marked. Two objects is the
+  // minimum any family needs, so below that there is nothing to report.
+  function currentFamilies() {
+    if (state.objects.length < 2) return null;
+    const families = Gnomon.synth.families(state.objects);
+    try {
+      return {
+        z: Gnomon.geom.vanishingPoint(families.vertical),
+        shadow: Gnomon.geom.vanishingPoint(families.shadow),
+        sun: Gnomon.geom.vanishingPoint(families.ray),
+      };
+    } catch (err) {
+      // A zero-length segment from a double-click. Report nothing rather than a
+      // vanishing point computed from fewer lines than the user marked.
+      return null;
+    }
+  }
+
+  function drawLine(ctx, a, b, colour, width) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.lineTo(b[0], b[1]);
+    ctx.stroke();
+  }
+
+  /* The dashed extensions are what let a user see whether the lines actually
+     agree before trusting any number derived from them — so they are drawn long
+     enough to reach off-canvas, and they are drawn for near-parallel families
+     too, where the convergence point is at infinity. */
+  function drawExtension(ctx, from, other, vp, colour, reach) {
+    const dir = Gnomon.geom.extensionDirection(from, other, vp);
+    if (!dir) return;
+    ctx.save();
+    ctx.strokeStyle = colour;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 7]);
+    ctx.beginPath();
+    ctx.moveTo(from[0], from[1]);
+    ctx.lineTo(from[0] + dir[0] * reach, from[1] + dir[1] * reach);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHandle(ctx, point, colour, filled) {
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = colour;
+    ctx.fillStyle = filled ? colour : "rgba(16,18,21,.72)";
+    ctx.beginPath();
+    ctx.arc(point[0], point[1], 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function redraw() {
+    if (!state.baseCanvas) return;
+    const ctx = imageCanvas.getContext("2d");
+    ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+    ctx.drawImage(state.baseCanvas, 0, 0);
+
+    const styles = getComputedStyle(document.documentElement);
+    const colour = {
+      vertical: styles.getPropertyValue("--vertical").trim(),
+      shadow: styles.getPropertyValue("--shadow-line").trim(),
+      ray: styles.getPropertyValue("--ray").trim(),
+    };
+    const reach = Math.hypot(imageCanvas.width, imageCanvas.height) * 1.6;
+    const vps = currentFamilies();
+
+    for (const obj of state.objects) {
+      if (vps) {
+        drawExtension(ctx, obj.top, obj.base, vps.z.v, colour.vertical, reach);
+        drawExtension(ctx, obj.base, obj.top, vps.z.v, colour.vertical, reach);
+        drawExtension(ctx, obj.tip, obj.base, vps.shadow.v, colour.shadow, reach);
+        drawExtension(ctx, obj.tip, obj.top, vps.sun.v, colour.ray, reach);
+      }
+      drawLine(ctx, obj.base, obj.top, colour.vertical, 2.5);
+      drawLine(ctx, obj.base, obj.tip, colour.shadow, 2.5);
+      drawLine(ctx, obj.top, obj.tip, colour.ray, 2);
+    }
+    for (const obj of state.objects) {
+      drawHandle(ctx, obj.base, colour.vertical, true);
+      drawHandle(ctx, obj.top, colour.vertical, false);
+      drawHandle(ctx, obj.tip, colour.ray, false);
+    }
+
+    // The object being placed right now, drawn the same way so a half-finished
+    // object looks like an object rather than like an error.
+    if (state.pending.base && state.pending.top) drawLine(ctx, state.pending.base, state.pending.top, colour.vertical, 2.5);
+    for (const key of MARK_ORDER) {
+      if (state.pending[key]) drawHandle(ctx, state.pending[key], colour.ray, key === "base");
+    }
+
+    if (state.reference && state.reference.length === 2) {
+      ctx.save();
+      ctx.setLineDash([2, 4]);
+      drawLine(ctx, state.reference[0], state.reference[1], "#d6dae0", 2);
+      ctx.restore();
+      state.reference.forEach(function (p) { drawHandle(ctx, p, "#d6dae0", false); });
+    } else if (state.reference) {
+      state.reference.forEach(function (p) { drawHandle(ctx, p, "#d6dae0", false); });
+    }
+
+    if (state.rectangle.length) {
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      for (let i = 0; i + 1 < state.rectangle.length; i++) {
+        drawLine(ctx, state.rectangle[i], state.rectangle[i + 1], "#b58ad6", 1.5);
+      }
+      if (state.rectangle.length === 4) drawLine(ctx, state.rectangle[3], state.rectangle[0], "#b58ad6", 1.5);
+      ctx.restore();
+      state.rectangle.forEach(function (p) { drawHandle(ctx, p, "#b58ad6", false); });
+    }
+  }
+
+  function renderLoupe(event, point) {
+    if (!state.baseCanvas) return;
+    const ZOOM = 5, SIZE = 140;
+    const ctx = loupeCanvas.getContext("2d");
+    const span = SIZE / ZOOM;
+
+    ctx.fillStyle = "#16191d";
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      state.baseCanvas,
+      point[0] - span / 2, point[1] - span / 2, span, span,
+      0, 0, SIZE, SIZE,
+    );
+
+    // Crosshair, so the loupe shows exactly which pixel is being placed rather
+    // than just a bigger blur.
+    ctx.strokeStyle = "rgba(224,164,76,.95)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(SIZE / 2, 0); ctx.lineTo(SIZE / 2, SIZE / 2 - 7);
+    ctx.moveTo(SIZE / 2, SIZE / 2 + 7); ctx.lineTo(SIZE / 2, SIZE);
+    ctx.moveTo(0, SIZE / 2); ctx.lineTo(SIZE / 2 - 7, SIZE / 2);
+    ctx.moveTo(SIZE / 2 + 7, SIZE / 2); ctx.lineTo(SIZE, SIZE / 2);
+    ctx.stroke();
+
+    loupe.style.left = (event.clientX + 22) + "px";
+    loupe.style.top = (event.clientY - SIZE - 18) + "px";
+    loupe.classList.add("live");
+  }
+
+  function renderMarks() {
+    const count = state.objects.length;
+    putRead("objects", String(count));
+
+    if (!count) {
+      objectList.innerHTML = '<p class="note">None yet. Three clicks each: base, top, shadow tip.</p>';
+    } else {
+      objectList.innerHTML = state.objects.map(function (obj, i) {
+        return '<div class="object-row"><span class="idx">' + (i + 1) + '</span>' +
+          '<span class="coords">' + Math.round(obj.base[0]) + "," + Math.round(obj.base[1]) +
+          " → " + Math.round(obj.tip[0]) + "," + Math.round(obj.tip[1]) + "</span>" +
+          '<button data-delete="' + i + '" title="Delete object">✕</button></div>';
+      }).join("") + (count === 2
+        ? '<p class="note">Two objects fixes each vanishing point exactly, so your clicking error passes straight through. A third lets the fit average it out.</p>'
+        : "");
+    }
+
+    objectList.querySelectorAll("[data-delete]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        state.objects.splice(Number(button.getAttribute("data-delete")), 1);
+        renderMarks();
+        redraw();
+      });
+    });
+
+    if (!state.image) markPrompt.textContent = "Load an image to begin";
+    else if (state.mode === "reference") {
+      markPrompt.innerHTML = state.reference && state.reference.length === 1
+        ? "Reference: click the <b>far end</b>" : "Reference: click <b>one end</b> of a known direction";
+    } else if (state.mode === "rectangle") {
+      markPrompt.innerHTML = "Rectangle: corner <b>" + (state.rectangle.length + 1) + "</b> of 4";
+    } else {
+      const slot = nextSlot();
+      markPrompt.innerHTML = "Object " + (count + 1) + ": click the <b>" + MARK_LABEL[slot] + "</b>";
+    }
+
+    const haveReference = state.reference && state.reference.length === 2;
+    bearingInput.disabled = !haveReference;
+    document.getElementById("bearing-note").textContent = haveReference
+      ? "Azimuth is reported against this direction."
+      : "Mark a reference direction to report azimuth against north.";
+
+    const vps = currentFamilies();
+    if (vps) {
+      for (const key of ["z", "shadow", "sun"]) {
+        const vp = vps[key];
+        Gnomon.debug.set("vanishing points", "v_" + key + " (homogeneous)",
+          "[" + vp.v.map(function (n) { return Gnomon.fmt(n); }).join(", ") + "]");
+        Gnomon.debug.set("vanishing points", "v_" + key + " condition", vp.conditionNumber);
+        Gnomon.debug.set("vanishing points", "v_" + key + " at infinity", vp.atInfinity);
+      }
+    } else {
+      Gnomon.debug.clear("vanishing points");
+    }
+    renderDebug();
+    if (window.gnomonOnMarksChanged) window.gnomonOnMarksChanged();
+  }
+
+  function placeAt(point) {
+    if (state.mode === "reference") {
+      if (!state.reference || state.reference.length === 2) state.reference = [];
+      state.reference.push(point);
+    } else if (state.mode === "rectangle") {
+      if (state.rectangle.length === 4) state.rectangle = [];
+      state.rectangle.push(point);
+    } else {
+      const slot = nextSlot();
+      state.pending[slot] = point;
+      if (!nextSlot()) {
+        state.objects.push(state.pending);
+        state.pending = {};
+      }
+    }
+    renderMarks();
+    redraw();
+  }
+
+  imageCanvas.addEventListener("pointerdown", function (event) {
+    if (!state.image) return;
+    const target = hitTest(event);
+    if (target) {
+      state.drag = target;
+      imageCanvas.setPointerCapture(event.pointerId);
+      renderLoupe(event, pointFor(target));
+      event.preventDefault();
+    }
+  });
+
+  imageCanvas.addEventListener("pointermove", function (event) {
+    if (!state.drag) return;
+    const point = toImage(event);
+    setPointFor(state.drag, point);
+    redraw();
+    renderLoupe(event, point);
+  });
+
+  imageCanvas.addEventListener("pointerup", function (event) {
+    if (state.drag) {
+      state.drag = null;
+      loupe.classList.remove("live");
+      renderMarks();
+      redraw();
+      return;
+    }
+    if (!state.image) return;
+    placeAt(toImage(event));
+  });
+
+  imageCanvas.addEventListener("pointercancel", function () {
+    state.drag = null;
+    loupe.classList.remove("live");
+  });
+
+  function setMode(mode) {
+    state.mode = mode;
+    for (const m of ["object", "reference", "rectangle"]) {
+      document.getElementById("mode-" + m).setAttribute("aria-pressed", String(m === mode));
+    }
+    renderMarks();
+  }
+  document.getElementById("mode-object").addEventListener("click", function () { setMode("object"); });
+  document.getElementById("mode-reference").addEventListener("click", function () { setMode("reference"); });
+  document.getElementById("mode-rectangle").addEventListener("click", function () { setMode("rectangle"); });
+
+  document.getElementById("undo-mark").addEventListener("click", function () {
+    // Undo peels back the half-placed object first, then whole ones — which is
+    // the order a user expects, because the partial one is what they can see
+    // themselves in the middle of.
+    const placed = MARK_ORDER.filter(function (k) { return state.pending[k]; });
+    if (placed.length) delete state.pending[placed[placed.length - 1]];
+    else if (state.rectangle.length && state.mode === "rectangle") state.rectangle.pop();
+    else if (state.reference && state.reference.length && state.mode === "reference") state.reference.pop();
+    else state.objects.pop();
+    renderMarks();
+    redraw();
+  });
+
+  document.getElementById("clear-marks").addEventListener("click", function () {
+    state.objects = [];
+    state.pending = {};
+    state.reference = null;
+    state.rectangle = [];
+    renderMarks();
+    redraw();
+  });
+
+  bearingInput.addEventListener("input", function () {
+    if (window.gnomonOnMarksChanged) window.gnomonOnMarksChanged();
+  });
+
+  // Exposed so a browser test can place marks without synthesising pointer
+  // events at fractional device pixels.
+  window.gnomonPlace = function (points) {
+    for (const p of points) placeAt(p);
+  };
+  window.gnomonRedraw = redraw;
+  window.gnomonRenderMarks = renderMarks;
 
   const fileInput = document.getElementById("file-input");
   fileInput.addEventListener("change", function () {

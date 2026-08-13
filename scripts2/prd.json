@@ -56,7 +56,7 @@
       "id": "G6",
       "issue": 7,
       "title": "Marking: objects, loupe, and the three line families",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G5",

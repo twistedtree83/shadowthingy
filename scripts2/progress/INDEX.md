@@ -9,7 +9,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G3  | #4  | Homogeneous geometry kernel: vanishing points and conditioning | yes | **shipped** — [G3.md](G3.md) |
 | G4  | #5  | Synthetic scene generator and the vanishing-point round trip | yes | **shipped** — [G4.md](G4.md) |
 | G5  | #6  | Image, EXIF, and metadata integrity flags | yes | **shipped** — [G5.md](G5.md) |
-| G6  | #7  | Marking: objects, loupe, and the three line families | yes | pending |
+| G6  | #7  | Marking: objects, loupe, and the three line families | yes | **shipped** — [G6.md](G6.md) |
 | G7  | #8  | Calibration cascade: five tiers, fall-through, and disagreement | yes | pending |
 | G8  | #9  | Sun direction, sign resolution, and the validity residual | yes | pending |
 | G9  | #10 | Monte Carlo uncertainty and the azimuth-only fallback | yes | pending |

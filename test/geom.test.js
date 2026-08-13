@@ -179,3 +179,43 @@ test("scale invariance: the same scene in different pixel units agrees", () => {
 test("fewer than two segments is an error, not a guess", () => {
   assert.throws(() => geom.vanishingPoint([{ a: [0, 0], b: [1, 1] }]), /at least two/);
 });
+
+// ── Extensions toward a convergence point ────────────────────────────────────
+// Drawing these is how a user sees whether the lines actually agree before
+// trusting anything derived from them, so they have to be right even when the
+// convergence point is off-canvas or at infinity.
+
+test("an extension runs from a point toward a finite vanishing point", () => {
+  // Segment (0,0)→(100,100), vanishing point at (500,500): the extension
+  // continues along the diagonal.
+  const d = geom.extensionDirection([100, 100], [0, 0], [500, 500, 1]);
+  near(d[0], Math.SQRT1_2, 1e-9);
+  near(d[1], Math.SQRT1_2, 1e-9);
+});
+
+test("an extension toward a vanishing point behind the segment points backwards", () => {
+  // The point of the dashed line is to reach the convergence point, so when the
+  // vanishing point is on the other side it must run that way — pretending
+  // otherwise would draw lines that never meet and imply a disagreement that
+  // is not there.
+  const d = geom.extensionDirection([100, 100], [0, 0], [-300, -300, 1]);
+  near(d[0], -Math.SQRT1_2, 1e-9);
+  near(d[1], -Math.SQRT1_2, 1e-9);
+});
+
+test("an extension toward infinity continues the segment's own direction", () => {
+  // A point at infinity is reached in either direction along the line, so the
+  // only sensible choice is the one that continues the segment rather than
+  // doubling back over it.
+  const forward = geom.extensionDirection([100, 50], [0, 50], [1, 0, 0]);
+  near(forward[0], 1, 1e-9);
+  near(forward[1], 0, 1e-9);
+
+  const backward = geom.extensionDirection([0, 50], [100, 50], [1, 0, 0]);
+  near(backward[0], -1, 1e-9);
+  near(backward[1], 0, 1e-9);
+});
+
+test("a zero-length segment yields no extension rather than NaN", () => {
+  assert.equal(geom.extensionDirection([10, 10], [10, 10], [1, 0, 0]), null);
+});
