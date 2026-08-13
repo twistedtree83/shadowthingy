@@ -15,7 +15,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G9  | #10 | Monte Carlo uncertainty and the azimuth-only fallback | yes | **shipped** — [G9.md](G9.md) |
 | G10 | #11 | Inverse solve: the global elevation-and-azimuth grid | yes | **shipped** — [G10.md](G10.md) |
 | G11 | #16 | Map: orthographic globe, bundled coastlines, soft band | yes | **shipped** — [G11.md](G11.md) |
-| G12 | #17 | Time scrubber: the band sweeping across the globe | yes | pending |
+| G12 | #17 | Time scrubber: the band sweeping across the globe | yes | **shipped** — [G12.md](G12.md) |
 | G13 | #18 | Three modes: Verify, Time, Locate | yes | **shipped** — [G13.md](G13.md) |
 | G14 | #19 | Guards: low sun, the equinoxes, and a broken residual | yes | **shipped** — [G14.md](G14.md) |
 | G15 | #20 | Report export: one self-contained file that outlives the session | yes | **shipped** — [G15.md](G15.md) |

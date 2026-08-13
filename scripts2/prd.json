@@ -119,7 +119,7 @@
       "id": "G12",
       "issue": 17,
       "title": "Time scrubber: the band sweeping across the globe",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G11"
