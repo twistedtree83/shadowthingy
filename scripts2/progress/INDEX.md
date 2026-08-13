@@ -44,3 +44,66 @@ closes it out.
 `#12`, `#13`, `#14`, `#15` were created by a parallel session working a different
 14-ticket cut of the spec. They are closed as `not_planned`; the 17-ticket graph
 above is the one of record. No content was lost — each is covered by a ticket here.
+
+---
+
+## Terminus — the AFK run is complete
+
+**15 of 17 shipped.** Both remaining tasks are human gates by construction.
+
+```
+WAITING: G16 (#21) — import the Claude Design source. Needs an interactive
+         /design-login, which no autonomous session can perform. Either run the
+         import from an interactive Claude Code session, use Claude Design's
+         "Send to Claude Code Web", or paste Gnomon.dc.html + image-slot.js +
+         support.js into the session.
+
+WAITING: G17 (#22) — the tuning and honesty pass. Every threshold in the app is
+         a first estimate and nobody can assert from a test that a band READS as
+         honest. See the list below.
+```
+
+### What G17 has to decide
+
+**The one that matters most.** The spec's central rule says a stripped image
+must produce a *visibly wide* band. Measured on the fixtures, it does not — and
+the geometry says it should not:
+
+| fixture | tier | band width |
+|---|---|---|
+| clean | 1 (±2%) | 3.8° |
+| stripped | 4 (±15%) | 3.7° |
+| cropped | 1 (±8%) | **5.7°** |
+
+G9 found why: `d_up` and `d_sun` are built with the *same* focal length, so
+scaling it rotates both alike and their mutual angle barely moves. **Elevation
+is genuinely robust to focal length.** Tier 4 recovers `f` to better than 1% from
+the marks alone, so a stripped-but-uncropped image legitimately supports a narrow
+band. What actually destroys information is a **crop**, because it moves the
+principal point — and that case does widen, by 50%.
+
+This is a real tension between the stated rule and what the geometry supports. It
+is a product decision, not a bug, and it belongs to a human.
+
+### Thresholds awaiting judgement
+
+| constant | value | where |
+|---|---|---|
+| principal-point sampling on a crop | 0.15 × image width | G9 |
+| crop sweep penalty | 4× | G7 |
+| low-sun refusal | 5° | G14 |
+| equinox warning | \|δ\| < 4° | G14 |
+| residual warn / refuse | 1.5× / 6× the noise floor | G14 |
+| weak-check floor | 5° | G14 |
+| Monte Carlo σ | 3px | G9 |
+
+### Also for G17
+
+- **Rebuild the demo fixture with larger objects and a longer reference.** Its
+  poles are ~130px, so marking noise produces a ~25° residual floor and
+  `weak-residual-check` fires on every run — correctly, but it means the residual
+  guard is never exercised for real.
+- Tier 3 accepts any quadrilateral as a "rectangle" without a plausibility check;
+  a wildly non-rectangular one yields a confident wrong answer at ±10%.
+- With a near-level camera the dashed convergence extensions fan toward points
+  far off-canvas. Honest, but judge whether it reads as "converging".
