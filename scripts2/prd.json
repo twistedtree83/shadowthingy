@@ -150,7 +150,7 @@
       "id": "G15",
       "issue": 20,
       "title": "Report export: one self-contained file that outlives the session",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G14"

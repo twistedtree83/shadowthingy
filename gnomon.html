@@ -299,6 +299,7 @@
       <button id="mode-rectangle">Scene rectangle</button>
       <button id="undo-mark">Undo</button>
       <button id="clear-marks">Clear</button>
+      <button id="export-report">Export report</button>
       <span class="prompt" id="mark-prompt">Load an image to begin</span>
     </div>
     <div class="canvas-stage" id="canvas-stage">
@@ -2687,6 +2688,230 @@ var Gnomon = (function () {
     return { evaluate: evaluate, ASSUMPTIONS: ASSUMPTIONS };
   })();
 
+  /* ── report ──────────────────────────────────────────────────────────────
+     A self-contained HTML report, built as a pure function over the values the
+     core produced.
+
+     It never touches the DOM. A report and the screen it was taken from must
+     not be able to disagree, and scraping rendered text is exactly how they
+     would — so this takes structured values and formats them itself.
+
+     The output references nothing outside itself: the image and the map are
+     inlined as data URIs and there is no script and no stylesheet link. The
+     report will outlive the session and be read by somebody who does not have
+     the app, quite possibly offline, and one that needs the internet to render
+     is one that will one day render blank.
+     ──────────────────────────────────────────────────────────────────────── */
+  const report = (function () {
+    function esc(value) {
+      return String(value === undefined || value === null ? "—" : value)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    function num(n, places) {
+      if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+      return n.toFixed(places === undefined ? 3 : places);
+    }
+
+    function vec(v) {
+      return Array.isArray(v) ? "[" + v.map(function (n) { return num(n, 4); }).join(", ") + "]" : "—";
+    }
+
+    function rows(pairs) {
+      return pairs.map(function (p) {
+        return "<tr><th>" + esc(p[0]) + "</th><td>" + (p[2] ? p[1] : esc(p[1])) + "</td></tr>";
+      }).join("");
+    }
+
+    function bandText(b, unit) {
+      if (!b) return "—";
+      if (b.unbounded) return "unbounded";
+      return num(b.p5, 2) + unit + " – " + num(b.p95, 2) + unit +
+             " <span class=\"mid\">(median " + num(b.p50, 2) + unit + ")</span>";
+    }
+
+    function clockOf(claim) {
+      if (!claim || !Number.isFinite(claim.minutes)) return "—";
+      const h = Math.floor(claim.minutes / 60), m = claim.minutes % 60;
+      return claim.year + "-" + String(claim.month).padStart(2, "0") + "-" +
+             String(claim.day).padStart(2, "0") + " " +
+             String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") +
+             " (UTC" + (claim.tzOffsetHours >= 0 ? "+" : "") + claim.tzOffsetHours + ")";
+    }
+
+    function build(d) {
+      const g = d.guards || { fired: [], assumptions: [], confident: true };
+      const cal = d.calibration || {};
+      const s = d.sun || {};
+      const u = d.uncertainty || {};
+
+      /* The headline is the confidence, not the number. When a guard has
+         refused, the report says so where the answer would have been — a report
+         is precisely where a withheld answer is most likely to be mistaken for
+         a finding, because the reader was not there when it was produced. */
+      const headline = !g.confident
+        ? '<div class="verdict withheld"><div class="tag">answer withheld</div>' +
+          "<p>The geometry does not support a confident answer. The measurements below are recorded " +
+          "for review, but they are not a finding.</p></div>"
+        : d.verdict
+          ? '<div class="verdict ' + esc(d.verdict.verdict) + '"><div class="tag">' +
+            esc(d.verdict.verdict.replace("-", " ")) + "</div><p>" + esc(d.verdict.sentence) + "</p></div>"
+          : "";
+
+      const guardRows = g.fired.length
+        ? '<section><h2>Guards</h2><ul class="guards">' + g.fired.map(function (x) {
+            return '<li class="' + esc(x.severity) + '"><b>' + esc(x.title) + ".</b> " + esc(x.message) + "</li>";
+          }).join("") + "</ul></section>"
+        : "";
+
+      const flagRows = d.meta && d.meta.flags && d.meta.flags.length
+        ? '<section><h2>Metadata integrity</h2><ul class="guards">' + d.meta.flags.map(function (f) {
+            return '<li class="' + esc(f.severity === "loud" ? "refuse" : "warn") + '"><b>' +
+              esc(f.kind) + ".</b> " + esc(f.message) + "</li>";
+          }).join("") + "</ul></section>"
+        : "";
+
+      const candidateRows = (cal.candidates || []).map(function (c) {
+        return "<tr><th>tier " + esc(c.tier) + " · " + esc(c.method) + "</th><td>" +
+          num(c.focalPx, 1) + " px ±" + num(c.sweep * 100, 0) + "%</td></tr>";
+      }).join("");
+
+      const objectRows = (d.objects || []).map(function (o, i) {
+        return "<tr><th>object " + (i + 1) + "</th><td>base " + vec(o.base) +
+          " · top " + vec(o.top) + " · tip " + vec(o.tip) + "</td></tr>";
+      }).join("");
+
+      const vp = d.vanishing || {};
+      const vpRows = ["z", "shadow", "sun"].filter(function (k) { return vp[k]; }).map(function (k) {
+        const v = vp[k];
+        return "<tr><th>v_" + k + "</th><td>" + vec(v.v) + " · condition " + num(v.conditionNumber, 6) +
+          (v.atInfinity ? " · at infinity" : "") + (v.wellConditioned ? "" : " · POORLY CONDITIONED") + "</td></tr>";
+      }).join("");
+
+      return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">' +
+        "<title>Gnomon report</title><style>" +
+        ":root{--ink:#1b1f24;--dim:#5c6570;--faint:#8a939d;--rule:#d8dde3;--accent:#a86a12;" +
+        "--bad:#a33527;--good:#2f6b40;--mono:ui-monospace,Menlo,Consolas,monospace}" +
+        "body{max-width:52rem;margin:2.5rem auto;padding:0 1.5rem;background:#fff;color:var(--ink);" +
+        "font:14px/1.6 system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif}" +
+        "h1{font-size:17px;letter-spacing:.13em;text-transform:uppercase;margin:0 0 .2rem}" +
+        "h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);" +
+        "margin:2rem 0 .5rem;border-bottom:1px solid var(--rule);padding-bottom:.3rem}" +
+        ".sub{color:var(--faint);font-size:12px;margin:0 0 1.5rem}" +
+        "table{width:100%;border-collapse:collapse;margin:0}" +
+        "th{text-align:left;font-weight:400;color:var(--dim);width:15rem;vertical-align:top;padding:.18rem 0}" +
+        "td{font-family:var(--mono);font-variant-numeric:tabular-nums;padding:.18rem 0}" +
+        ".mid{color:var(--faint)}" +
+        ".verdict{border-left:3px solid var(--rule);padding:.1rem 0 .1rem 1rem;margin:1.5rem 0}" +
+        ".verdict .tag{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}" +
+        ".verdict p{margin:.3rem 0 0;font-size:15px}" +
+        ".verdict.consistent{border-color:var(--good)}.verdict.consistent .tag{color:var(--good)}" +
+        ".verdict.inconsistent{border-color:var(--bad)}.verdict.inconsistent .tag{color:var(--bad)}" +
+        ".verdict.withheld,.verdict.cannot-tell{border-color:var(--accent)}" +
+        ".verdict.withheld .tag,.verdict.cannot-tell .tag{color:var(--accent)}" +
+        "ul.guards{list-style:none;padding:0;margin:0}" +
+        "ul.guards li{padding:.4rem 0 .4rem .8rem;border-left:2px solid var(--rule);margin-bottom:.4rem}" +
+        "ul.guards li.refuse{border-color:var(--bad)}ul.guards li.warn{border-color:var(--accent)}" +
+        "figure{margin:0}figure img{max-width:100%;border:1px solid var(--rule);display:block}" +
+        "figcaption{color:var(--faint);font-size:11px;margin-top:.3rem}" +
+        ".two{display:flex;gap:1.25rem;align-items:flex-start}.two figure{flex:1;min-width:0}" +
+        "ol.assumptions{color:var(--dim);font-size:12.5px;padding-left:1.1rem}" +
+        "ol.assumptions li{margin-bottom:.45rem}" +
+        "footer{margin-top:2.5rem;border-top:1px solid var(--rule);padding-top:.7rem;color:var(--faint);font-size:11px}" +
+        "</style></head><body>" +
+
+        "<h1>Gnomon report</h1>" +
+        '<p class="sub">Sun direction recovered from the projective geometry of shadows. ' +
+        "Generated " + esc(d.generatedAt) + ". Every figure below was computed in the browser; " +
+        "no image or coordinate left the machine that produced this.</p>" +
+
+        headline +
+
+        '<section><div class="two">' +
+        (d.images && d.images.marked
+          ? '<figure><img alt="The marked photograph" src="' + esc(d.images.marked) +
+            '"><figcaption>The marks these findings rest on.</figcaption></figure>' : "") +
+        (d.images && d.images.map
+          ? '<figure><img alt="The band of the world that fits" src="' + esc(d.images.map) +
+            '"><figcaption>Where the sun could have been where these shadows say.</figcaption></figure>' : "") +
+        "</div></section>" +
+
+        "<section><h2>The answer, with its tolerance</h2><table>" +
+        rows([
+          ["Elevation", bandText(u.elevation, "°"), true],
+          ["Azimuth (from north)", bandText(u.azimuth, "°"), true],
+          ["Shadow multiplier", s.elevation > 0 ? "×" + num(s.shadowMultiplier, 3) : "no shadow"],
+          ["Coplanarity residual", num(s.residual, 4) + "°"],
+          ["Residual from marking noise alone", u.residual ? num(u.residual.p50, 2) + "° (median)" : "—"],
+          ["Monte Carlo samples", (u.samples || 0) + (u.failures ? " (" + u.failures + " degenerate)" : "")],
+        ]) + "</table></section>" +
+
+        "<section><h2>Calibration</h2><table>" +
+        rows([
+          ["Tier used", "tier " + esc(cal.tier) + " · " + esc(cal.method)],
+          ["Focal length", num(cal.focalPx, 1) + " px  ±" + num(cal.sweep * 100, 0) + "%"],
+          ["Range swept", cal.range ? num(cal.range[0], 0) + " – " + num(cal.range[1], 0) + " px" : "—"],
+          ["Principal point", vec(cal.principalPoint) + (cal.principalPointTrustworthy ? "" : "  (untrusted — cropped)")],
+        ]) + candidateRows +
+        (cal.disagreement
+          ? "<tr><th>Disagreement</th><td>" + num(cal.disagreement.exif, 0) + " px (EXIF) vs " +
+            num(cal.disagreement.geometry, 0) + " px (geometry) — " +
+            num(Math.abs(cal.disagreement.percent), 0) + "% apart, reported and not averaged</td></tr>"
+          : "") +
+        "</table></section>" +
+
+        "<section><h2>Recovered directions</h2><table>" +
+        rows([
+          ["d_up", vec(s.dUp)],
+          ["d_shadow", vec(s.dShadow)],
+          ["d_ray (top → tip)", vec(s.dRay)],
+          ["d_sun (toward the sun)", vec(s.dSun)],
+          ["determinant", num(s.determinant, 8)],
+        ]) + "</table></section>" +
+
+        "<section><h2>Vanishing points</h2><table>" + vpRows + "</table></section>" +
+
+        "<section><h2>Marks</h2><table>" + objectRows + "</table></section>" +
+
+        "<section><h2>The image as it described itself</h2><table>" +
+        rows([
+          // Raw, not pre-escaped: rows() escapes once. Escaping here too would
+          // render a model containing "<" as a literal "&lt;".
+          ["Camera", (((d.meta && d.meta.make) || "—") + " " + ((d.meta && d.meta.model) || "")).trim()],
+          ["Decoded size", d.meta ? d.meta.decodedWidth + " × " + d.meta.decodedHeight : "—"],
+          ["EXIF orientation", d.meta ? d.meta.orientation : "—"],
+          ["Focal length (35mm eq)", d.meta && d.meta.effectiveFocal35 !== null ? d.meta.effectiveFocal35 + " mm" : "absent"],
+          ["Sensor width", d.meta && d.meta.sensorWidth !== null ? d.meta.sensorWidth + " mm" : "unknown"],
+          ["Cropped", d.meta ? String(d.meta.cropped) : "—"],
+          ["Timezone source", (d.meta && d.meta.tzSource) || "not recoverable — supplied by hand"],
+          ["Claimed instant", clockOf(d.claim)],
+          ["Claimed place", d.claim ? num(d.claim.latitude, 4) + ", " + num(d.claim.longitude, 4) : "—"],
+        ]) + "</table></section>" +
+
+        (d.band
+          ? "<section><h2>Inverse solve</h2><table>" + rows([
+              ["Cells fitting", d.band.unbounded ? "unbounded — the whole daylit hemisphere"
+                : d.band.count + " of " + d.band.evaluated],
+              ["Bearing applied", String(!!d.band.azimuthApplied)],
+            ]) + "</table></section>"
+          : "") +
+
+        guardRows + flagRows +
+
+        "<section><h2>Assumptions this rests on</h2><ol class=\"assumptions\">" +
+        (g.assumptions || []).map(function (a) { return "<li>" + esc(a) + "</li>"; }).join("") +
+        "</ol></section>" +
+
+        "<footer>Produced by Gnomon. The bands above are 5th–95th percentiles from a seeded " +
+        "Monte Carlo over the marked points and the calibration sweep — the same marks and seed " +
+        "always reproduce them. A median quoted without its band is not a finding.</footer>" +
+        "</body></html>";
+    }
+
+    return { build: build };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -2789,7 +3014,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.11.0",
+    version: "1.0.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -2802,6 +3027,7 @@ var Gnomon = (function () {
     grid: grid,
     modes: modes,
     guards: guards,
+    report: report,
     synth: synth,
   };
 })();
@@ -4355,6 +4581,61 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   for (const m of ["verify", "time", "locate"]) {
     document.getElementById("tab-" + m).addEventListener("click", function () { setResultMode(m); });
   }
+
+  /* ── export ────────────────────────────────────────────────────────────────
+     Gathers what the core produced and hands it to Gnomon.report, which builds
+     the document. The shell's only jobs are turning the two canvases into data
+     URIs and putting the result in front of the user — every value in the
+     report comes from the core, so the report and the screen cannot disagree. */
+  function buildReport() {
+    if (!state.image || !state.uncertainty) return null;
+    const args = readSolarInputs();
+    return Gnomon.report.build({
+      generatedAt: args
+        ? Gnomon.modes.clock(args.minutes) + " on " + args.year + "-" +
+          String(args.month).padStart(2, "0") + "-" + String(args.day).padStart(2, "0") +
+          " (UTC" + (args.tzOffsetHours >= 0 ? "+" : "") + args.tzOffsetHours + ")"
+        : "an unspecified instant",
+      claim: args ? Object.assign({}, args) : null,
+      meta: state.meta,
+      objects: state.objects,
+      vanishing: currentFamilies(),
+      calibration: state.calibration,
+      sun: state.sun,
+      uncertainty: state.uncertainty,
+      guards: state.guards,
+      verdict: state.verdict,
+      timeWindows: state.timeWindows,
+      band: state.band,
+      images: {
+        // The marked image, exactly as displayed — the reader sees which points
+        // produced the answer rather than being asked to take them on trust.
+        marked: imageCanvas.toDataURL("image/png"),
+        map: state.band ? mapCanvas.toDataURL("image/png") : null,
+      },
+    });
+  }
+
+  document.getElementById("export-report").addEventListener("click", function () {
+    const html = buildReport();
+    if (!html) {
+      markPrompt.textContent = "Nothing to report yet — mark two or more objects first";
+      return;
+    }
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "gnomon-report.html";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Revoked on the next tick: the click has already started the save, and
+    // holding the blob would keep the whole embedded image alive in memory.
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  });
+
+  window.gnomonBuildReport = buildReport;
   window.gnomonSetResultMode = setResultMode;
   window.gnomonRenderResult = renderResult;
 

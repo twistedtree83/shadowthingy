@@ -18,7 +18,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G12 | #17 | Time scrubber: the band sweeping across the globe | yes | pending |
 | G13 | #18 | Three modes: Verify, Time, Locate | yes | **shipped** — [G13.md](G13.md) |
 | G14 | #19 | Guards: low sun, the equinoxes, and a broken residual | yes | **shipped** — [G14.md](G14.md) |
-| G15 | #20 | Report export: one self-contained file that outlives the session | yes | pending |
+| G15 | #20 | Report export: one self-contained file that outlives the session | yes | **shipped** — [G15.md](G15.md) |
 | G16 | #21 | Visual system: import the Claude Design source | **no** | pending — human gate (`/design-login`) |
 | G17 | #22 | Tuning and honesty pass | **no** | pending — human gate (judgement) |
 
