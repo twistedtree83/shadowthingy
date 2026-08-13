@@ -342,11 +342,258 @@ var Gnomon = (function () {
   debug.fresh = freshDebug;
   tests.fresh = freshTests;
 
+  /* ── geom ────────────────────────────────────────────────────────────────
+     Homogeneous coordinates throughout. A point is [x, y, 1]; the line through
+     two points is their cross product; the intersection of two lines is theirs.
+
+     Dehomogenising is an explicit decision, never a default. When the third
+     component approaches zero the lines are near-parallel, the intersection is
+     near infinity, and dividing through produces a number that is enormous,
+     meaningless, and indistinguishable from a real measurement. "These lines
+     are parallel" is a real and common answer for a photograph.
+     ──────────────────────────────────────────────────────────────────────── */
+  const geom = (function () {
+    // Below this third component (after unit normalisation) the vector is a
+    // point at infinity: the lines are parallel to within floating-point noise.
+    const EPS_INFINITY = 1e-12;
+
+    // The ratio of the two smallest singular values, above which the family
+    // does not agree on a point well enough to carry a finite uncertainty.
+    // Chosen loose on purpose — G9's Monte Carlo does the real quantifying,
+    // and this only has to catch families that are not a point at all.
+    const CONDITION_LIMIT = 0.05;
+
+    function cross(a, b) {
+      return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+    }
+
+    function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    function norm(v) { return Math.hypot(v[0], v[1], v[2]); }
+
+    function unit(v) {
+      const n = norm(v);
+      return n === 0 ? [0, 0, 0] : [v[0] / n, v[1] / n, v[2] / n];
+    }
+
+    function point(x, y) { return [x, y, 1]; }
+    function lineThrough(p, q) { return cross(p, q); }
+    function meet(l1, l2) { return cross(l1, l2); }
+
+    function atInfinity(v, eps) {
+      const u = unit(v);
+      return Math.abs(u[2]) <= (eps === undefined ? EPS_INFINITY : eps);
+    }
+
+    function dehomogenise(v, eps) {
+      if (atInfinity(v, eps)) return null;
+      return { x: v[0] / v[2], y: v[1] / v[2] };
+    }
+
+    // How far out a finite intersection lands, so a caller can decide whether
+    // it is "too distant to mean anything" against its own scale. geom does not
+    // know the image size, so it must not make that call itself.
+    function magnitude(v) {
+      if (atInfinity(v)) return Infinity;
+      return Math.hypot(v[0] / v[2], v[1] / v[2]);
+    }
+
+    /* Hartley isotropic normalisation: shift the centroid to the origin and
+       scale so the mean distance from it is √2.
+
+       This is not a refinement. Line vectors built from raw pixel coordinates
+       have a third component of order x·y — around 10⁶ for a large image — so
+       after unit normalisation the first two components sit near 10⁻⁶ and lose
+       their precision entirely. Normalising first keeps every component O(1),
+       which is what makes the condition number mean anything. */
+    function normaliser(points) {
+      const n = points.length;
+      let sx = 0, sy = 0;
+      for (let i = 0; i < n; i++) { sx += points[i][0]; sy += points[i][1]; }
+      const cx = sx / n, cy = sy / n;
+
+      let sd = 0;
+      for (let i = 0; i < n; i++) sd += Math.hypot(points[i][0] - cx, points[i][1] - cy);
+      const mean = sd / n;
+      const s = mean > 0 ? Math.SQRT2 / mean : 1;
+
+      return {
+        apply: function (p) { return [(p[0] - cx) * s, (p[1] - cy) * s, 1]; },
+        // A point maps as p' = T p, so it comes back as p = T⁻¹ p'.
+        unapply: function (v) { return [v[0] / s + cx * v[2], v[1] / s + cy * v[2], v[2]]; },
+      };
+    }
+
+    /* Cyclic Jacobi eigenvalue iteration for a symmetric 3×3. The matrix is
+       always AᵀA here, so a general SVD would be a dependency bought for
+       nothing. Returns eigenvalues descending with matching eigenvectors. */
+    function jacobiEigen(M) {
+      const a = [M[0].slice(), M[1].slice(), M[2].slice()];
+      const V = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+      const pairs = [[0, 1], [0, 2], [1, 2]];
+
+      for (let sweep = 0; sweep < 60; sweep++) {
+        const off = Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]);
+        if (off <= 1e-18) break;
+
+        for (let i = 0; i < 3; i++) {
+          const p = pairs[i][0], q = pairs[i][1];
+          const apq = a[p][q];
+          if (Math.abs(apq) <= 1e-300) continue;
+
+          const theta = (a[q][q] - a[p][p]) / (2 * apq);
+          // Math.sign(0) is 0, which would give t = 0 and stall the rotation
+          // exactly when the two diagonal entries are equal — the case that
+          // most needs rotating. Force the positive branch instead.
+          const sgn = theta >= 0 ? 1 : -1;
+          const t = sgn / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+          const c = 1 / Math.sqrt(t * t + 1);
+          const s = t * c;
+
+          const app = a[p][p], aqq = a[q][q];
+          a[p][p] = app - t * apq;
+          a[q][q] = aqq + t * apq;
+          a[p][q] = 0; a[q][p] = 0;
+
+          for (let k = 0; k < 3; k++) {
+            if (k === p || k === q) continue;
+            const akp = a[k][p], akq = a[k][q];
+            a[k][p] = c * akp - s * akq; a[p][k] = a[k][p];
+            a[k][q] = s * akp + c * akq; a[q][k] = a[k][q];
+          }
+          for (let k = 0; k < 3; k++) {
+            const vkp = V[k][p], vkq = V[k][q];
+            V[k][p] = c * vkp - s * vkq;
+            V[k][q] = s * vkp + c * vkq;
+          }
+        }
+      }
+
+      const order = [0, 1, 2].sort(function (i, j) { return a[j][j] - a[i][i]; });
+      return {
+        values: order.map(function (i) { return a[i][i]; }),
+        vectors: order.map(function (i) { return [V[0][i], V[1][i], V[2][i]]; }),
+      };
+    }
+
+    /* The least-squares vanishing point of a family of segments: stack the unit
+       line vectors into A and take the right null vector of AᵀA.
+
+       conditionNumber is σ₃/σ₂ — 0 when the lines meet at exactly one point,
+       rising toward 1 as the null direction stops being cleanly separated. It
+       is deliberately the direction that RISES with degeneracy, so "higher is
+       worse" needs no remembering.
+
+       Being at infinity is NOT poor conditioning. A parallel family agrees
+       perfectly about its direction; it just meets nowhere finite, and that
+       direction is exactly what the sun recovery needs. The two are reported
+       separately because conflating them would throw away good data. */
+    function vanishingPoint(segments, options) {
+      if (!segments || segments.length < 2) {
+        throw new Error("a vanishing point needs at least two segments");
+      }
+      const limit = options && options.conditionLimit !== undefined
+        ? options.conditionLimit
+        : CONDITION_LIMIT;
+
+      const points = [];
+      for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        if (s.a[0] === s.b[0] && s.a[1] === s.b[1]) {
+          throw new Error("segment " + i + " has zero length and defines no line");
+        }
+        points.push(s.a, s.b);
+      }
+
+      const N = normaliser(points);
+      const lines = segments.map(function (s) {
+        return unit(cross(N.apply(s.a), N.apply(s.b)));
+      });
+
+      const AtA = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (let k = 0; k < lines.length; k++) {
+        const l = lines[k];
+        for (let i = 0; i < 3; i++) {
+          for (let j = 0; j < 3; j++) AtA[i][j] += l[i] * l[j];
+        }
+      }
+
+      const eig = jacobiEigen(AtA);
+      const singularValues = eig.values.map(function (v) { return Math.sqrt(Math.max(0, v)); });
+      // σ₂ vanishing means the lines span barely one direction — every line is
+      // effectively the same line, which is total degeneracy, not perfection.
+      const conditionNumber = singularValues[1] <= 1e-14 ? 1 : singularValues[2] / singularValues[1];
+
+      const v = unit(N.unapply(eig.vectors[2]));
+      const infinite = atInfinity(v);
+      const wellConditioned = conditionNumber <= limit;
+
+      return {
+        v: v,
+        point: infinite ? null : { x: v[0] / v[2], y: v[1] / v[2] },
+        atInfinity: infinite,
+        magnitude: infinite ? Infinity : Math.hypot(v[0] / v[2], v[1] / v[2]),
+        conditionNumber: conditionNumber,
+        wellConditioned: wellConditioned,
+        unbounded: !wellConditioned,
+        singularValues: singularValues,
+        lineCount: segments.length,
+      };
+    }
+
+    return {
+      EPS_INFINITY: EPS_INFINITY,
+      CONDITION_LIMIT: CONDITION_LIMIT,
+      cross: cross, dot: dot, norm: norm, unit: unit,
+      point: point, lineThrough: lineThrough, meet: meet,
+      atInfinity: atInfinity, dehomogenise: dehomogenise, magnitude: magnitude,
+      normaliser: normaliser, jacobiEigen: jacobiEigen,
+      vanishingPoint: vanishingPoint,
+    };
+  })();
+
+  /* Registered on the shared registry, so these run in the visible panel AND in
+     the headless suite from one definition. Hand-checkable cases only. */
+  tests.suite("projective geometry", function (t) {
+    const l = geom.lineThrough(geom.point(3, 4), geom.point(9, 12));
+    t.close("a collinear point lies on the line", geom.dot(l, geom.point(6, 8)), 0, 1e-9);
+
+    const m = geom.dehomogenise(geom.meet(
+      geom.lineThrough(geom.point(5, 0), geom.point(5, 100)),
+      geom.lineThrough(geom.point(0, 7), geom.point(100, 7)),
+    ));
+    t.close("x=5 meets y=7 at x", m.x, 5, 1e-9);
+    t.close("x=5 meets y=7 at y", m.y, 7, 1e-9);
+
+    const eig = geom.jacobiEigen([[2, 1, 0], [1, 2, 0], [0, 0, 5]]);
+    t.close("Jacobi largest eigenvalue", eig.values[0], 5, 1e-9);
+    t.close("Jacobi smallest eigenvalue", eig.values[2], 1, 1e-9);
+
+    const concurrent = geom.vanishingPoint([
+      { a: [0, 0], b: [500, 300] },
+      { a: [0, 600], b: [500, 300] },
+      { a: [1000, 0], b: [500, 300] },
+    ]);
+    t.close("concurrent family recovers its point", concurrent.point.x, 500, 1e-6);
+    t.close("concurrent family is exactly conditioned", concurrent.conditionNumber, 0, 1e-9);
+
+    const parallel = geom.vanishingPoint([
+      { a: [0, 100], b: [1000, 100] },
+      { a: [0, 300], b: [1000, 300] },
+    ]);
+    t.ok("parallel family is flagged at infinity", parallel.atInfinity);
+    t.ok("parallel family is not called poorly conditioned", parallel.wellConditioned);
+  });
+
   return {
-    version: "0.1.0",
+    version: "0.2.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
+    geom: geom,
   };
 })();
 

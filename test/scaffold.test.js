@@ -66,6 +66,23 @@ test("a throwing suite is reported as a failure rather than crashing the run", (
   assert.match(suite.checks[0].detail, /kaboom/);
 });
 
+// This is the mechanism that stops the visible panel drifting from the suite.
+// Every assertion registered on the shared registry runs in the browser panel;
+// this asserts the same set is green headlessly, so a slice cannot ship a
+// panel that shows FAIL to a user while CI stays green.
+test("every suite registered for the in-page panel is green", () => {
+  const results = Gnomon.tests.run();
+  assert.ok(results.length > 0, "no suites registered");
+
+  const failures = [];
+  for (const suite of results) {
+    for (const check of suite.checks) {
+      if (!check.pass) failures.push(`${suite.name}: ${check.label} (${check.detail})`);
+    }
+  }
+  assert.deepEqual(failures, [], `in-page assertions failing:\n${failures.join("\n")}`);
+});
+
 // The three regions and the debug panel are the contract G16 must not break
 // when it replaces the styling with the imported design system.
 test("the page has the three regions and a debug panel", () => {
