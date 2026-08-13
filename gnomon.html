@@ -1563,6 +1563,211 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── sun ─────────────────────────────────────────────────────────────────
+     Vanishing points into a sun direction, plus the check on whether the scene
+     was ever valid.
+
+     With K = [[f,0,cx],[0,f,cy],[0,0,1]], a vanishing point maps to a direction
+     as d = normalise(K⁻¹ v). A vanishing point is a direction only UP TO SIGN,
+     so both signs are resolved from the marks rather than assumed — getting
+     either backwards flips the answer by 180°, which is why each is pinned to
+     something the user actually clicked.
+     ──────────────────────────────────────────────────────────────────────── */
+  const sun = (function () {
+    const R2D = 180 / Math.PI;
+
+    function unit3(v) {
+      const n = Math.hypot(v[0], v[1], v[2]);
+      return n === 0 ? [0, 0, 0] : [v[0] / n, v[1] / n, v[2] / n];
+    }
+    function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    function cross3(a, b) {
+      return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+    }
+    function negate(v) { return [-v[0], -v[1], -v[2]]; }
+
+    // K⁻¹ applied to a homogeneous vanishing point. Written so that a point at
+    // infinity (w = 0) falls out correctly instead of dividing by it: the
+    // result is then a direction parallel to the image plane, which is a
+    // perfectly ordinary thing for a vertical to be.
+    function directionFrom(v, focal, c) {
+      return unit3([(v[0] - c[0] * v[2]) / focal, (v[1] - c[1] * v[2]) / focal, v[2]]);
+    }
+
+    /* Which way an image point slides when a 3D point moves along +d.
+
+       This is the whole of sign resolution. As t grows, the image of A + t·d
+       approaches the vanishing point of d — but only when the point at infinity
+       in that direction is in FRONT of the camera. When d points behind
+       (dz < 0) the image slides the other way, and taking "toward the vanishing
+       point" as the answer would resolve the sign backwards for exactly the
+       cameras that are tilted enough to be interesting. */
+    function imageDisplacement(d, focal, c, at) {
+      if (Math.abs(d[2]) < 1e-12) {
+        // Parallel to the image plane: the image slides along [f·dx, f·dy],
+        // whose sign is simply d's sign.
+        const n = Math.hypot(d[0], d[1]);
+        return n === 0 ? null : [d[0] / n, d[1] / n];
+      }
+      const vx = (focal * d[0]) / d[2] + c[0];
+      const vy = (focal * d[1]) / d[2] + c[1];
+      const dir = [vx - at[0], vy - at[1]];
+      const n = Math.hypot(dir[0], dir[1]);
+      if (n === 0) return null;
+      const sign = d[2] > 0 ? 1 : -1;
+      return [(sign * dir[0]) / n, (sign * dir[1]) / n];
+    }
+
+    // Pick the sign of d that makes the image slide from `from` toward `to`,
+    // voting across every marked object so one bad mark cannot flip the answer.
+    function orient(d, focal, c, pairs) {
+      let score = 0;
+      for (const pair of pairs) {
+        const want = [pair.to[0] - pair.from[0], pair.to[1] - pair.from[1]];
+        const wantLength = Math.hypot(want[0], want[1]);
+        if (wantLength === 0) continue;
+        const have = imageDisplacement(d, focal, c, pair.from);
+        if (!have) continue;
+        score += (have[0] * want[0] + have[1] * want[1]) / wantLength;
+      }
+      return score >= 0 ? d : negate(d);
+    }
+
+    function angleBetween(a, b) {
+      return Math.acos(Math.max(-1, Math.min(1, dot3(a, b)))) * R2D;
+    }
+
+    /* The 3D direction of a single marked line, given that it lies flat on the
+       ground.
+
+       One image line does NOT determine a 3D direction on its own — it only
+       fixes the plane through the camera centre that contains it, and the line
+       could point anywhere within that plane. The reference direction is
+       recoverable only because it is known to lie in the ground plane, so the
+       answer is the intersection of the two planes.
+
+       For an image line l, the projecting plane's normal in camera coordinates
+       is Kᵀl; the ground plane's normal is d_up; the shared direction is their
+       cross product. Treating the line's point at infinity as its vanishing
+       point instead — which is only correct when the line happens to be
+       parallel to the image plane — throws the azimuth off by tens of degrees
+       on any tilted camera. */
+    function groundDirectionOfImageLine(from, to, focal, c, up) {
+      const l = geom.lineThrough(geom.point(from[0], from[1]), geom.point(to[0], to[1]));
+      const planeNormal = [focal * l[0], focal * l[1], c[0] * l[0] + c[1] * l[1] + l[2]];
+      const d = cross3(planeNormal, up);
+      return Math.hypot(d[0], d[1], d[2]) < 1e-12 ? null : unit3(d);
+    }
+
+    // Component of v lying in the plane whose normal is `up`.
+    function flatten(v, up) {
+      const along = dot3(v, up);
+      return unit3([v[0] - along * up[0], v[1] - along * up[1], v[2] - along * up[2]]);
+    }
+
+    /* Signed angle from a to b about `up`, in compass sense: clockwise seen
+       from above is positive, because that is how bearings are measured and
+       how the solar engine reports azimuth. The cross-product term is
+       counter-clockwise-positive, hence the negation. */
+    function bearingDelta(a, b, up) {
+      const s = dot3(cross3(a, b), up);
+      const c = dot3(a, b);
+      return -Math.atan2(s, c) * R2D;
+    }
+
+    function solve(input) {
+      const vp = input.vanishing;
+      const focal = input.focalPx;
+      const c = input.principalPoint;
+      const objects = input.objects || [];
+
+      // Sign resolution, each pinned to a displacement the user drew:
+      //   up      base → top      (tops sit above their bases)
+      //   shadow  base → tip      (the shadow runs away from the object)
+      //   ray     top  → tip      (the ray runs down to the shadow tip)
+      const dUp = orient(directionFrom(vp.z.v, focal, c), focal, c,
+        objects.map(function (o) { return { from: o.base, to: o.top }; }));
+      const dShadow = orient(directionFrom(vp.shadow.v, focal, c), focal, c,
+        objects.map(function (o) { return { from: o.base, to: o.tip }; }));
+      const dRay = orient(directionFrom(vp.sun.v, focal, c), focal, c,
+        objects.map(function (o) { return { from: o.top, to: o.tip }; }));
+
+      // The ray runs AWAY from the sun — top down to shadow tip — so the
+      // direction of the sun itself is its negation. Elevation is then
+      // 90° − angle(d_up, d_toward_sun), which is the spec's formula once the
+      // ray has been turned around to point at the light rather than away.
+      const dSun = negate(dRay);
+      const elevation = 90 - angleBetween(dUp, dSun);
+
+      /* The validity residual. Vertical, shadow and ray are three edges of a
+         triangle standing on flat ground, so their directions are coplanar and
+         the determinant vanishes.
+
+         This is a real check and not a restatement because it is INDEPENDENT
+         OF THE CALIBRATION: Tier 4 was derived from v_z and v_shadow, while
+         this brings in v_sun, which played no part in it. A scene can satisfy
+         the calibration and still fail here, and that is the case worth
+         catching. */
+      const determinant = dot3(cross3(dUp, dShadow), dRay);
+      const residual = Math.asin(Math.min(1, Math.abs(determinant))) * R2D;
+
+      // Azimuth lives in the ground plane, so both directions have their d_up
+      // component removed before the angle is taken.
+      const sunFlat = flatten(dSun, dUp);
+      let azimuth = null;
+      let azimuthRelative = null;
+      if (input.reference && input.reference.from && input.reference.to) {
+        const refDir = groundDirectionOfImageLine(input.reference.from, input.reference.to, focal, c, dUp);
+        if (refDir) {
+          const refOriented = orient(refDir, focal, c, [{ from: input.reference.from, to: input.reference.to }]);
+          const refFlat = flatten(refOriented, dUp);
+          azimuthRelative = bearingDelta(refFlat, sunFlat, dUp);
+          if (Number.isFinite(input.reference.bearing)) {
+            azimuth = ((input.reference.bearing + azimuthRelative) % 360 + 360) % 360;
+          }
+        }
+      }
+
+      /* When v_sun is poorly conditioned the elevation is the casualty — it is
+         the only quantity that depends on the ray direction. Azimuth comes from
+         the shadow lying on the ground and survives, so it is offered as a mode
+         rather than reported as a failure. */
+      const elevationUsable = vp.sun.wellConditioned !== false;
+
+      return {
+        dUp: dUp,
+        dShadow: dShadow,
+        dRay: dRay,
+        dSun: dSun,
+        elevation: elevation,
+        elevationUsable: elevationUsable,
+        azimuth: azimuth,
+        azimuthRelative: azimuthRelative,
+        azimuthOnly: !elevationUsable,
+        residual: residual,
+        determinant: determinant,
+        shadowMultiplier: elevation > 0 ? 1 / Math.tan(elevation / R2D) : Infinity,
+        conditioning: {
+          z: vp.z.conditionNumber,
+          shadow: vp.shadow.conditionNumber,
+          sun: vp.sun.conditionNumber,
+        },
+      };
+    }
+
+    return {
+      solve: solve,
+      directionFrom: directionFrom,
+      imageDisplacement: imageDisplacement,
+      bearingDelta: bearingDelta,
+      flatten: flatten,
+    };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -1665,7 +1870,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.6.0",
+    version: "0.7.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -1673,6 +1878,7 @@ var Gnomon = (function () {
     solar: solar,
     geom: geom,
     calib: calib,
+    sun: sun,
     synth: synth,
   };
 })();
@@ -2462,8 +2668,67 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         Math.round(result.disagreement.geometry) + " px (geometry)");
     }
 
+    solveSun(result);
     renderCalibrationNotes(result);
     renderDebug();
+    return result;
+  }
+
+  /* ── the sun readout ───────────────────────────────────────────────────────
+     The residual is written first and read first. It is the only figure on
+     screen computed independently of the calibration, so it is the only one
+     that can contradict the rest — which is exactly what qualifies it to be
+     the headline. */
+  function solveSun(calibration) {
+    const vps = currentFamilies();
+    if (!vps) {
+      state.sun = null;
+      for (const k of ["residual", "elevation", "azimuth", "multiplier"]) putRead(k, "—");
+      Gnomon.debug.clear("sun");
+      return null;
+    }
+
+    const haveReference = state.reference && state.reference.length === 2;
+    const result = Gnomon.sun.solve({
+      vanishing: vps,
+      focalPx: calibration.focalPx,
+      principalPoint: calibration.principalPoint,
+      objects: state.objects,
+      reference: haveReference
+        ? { from: state.reference[0], to: state.reference[1], bearing: Number(bearingInput.value) }
+        : null,
+    });
+    state.sun = result;
+
+    putRead("residual", result.residual.toFixed(2) + "°");
+    const residualEl = document.querySelector('[data-read="residual"]');
+    // A rising residual means an assumption broke, so it stops looking like an
+    // ordinary reading once it does.
+    residualEl.style.color = result.residual > 3 ? "var(--bad)"
+      : result.residual > 1 ? "var(--accent)" : "var(--good)";
+
+    if (result.elevationUsable) {
+      putRead("elevation", result.elevation.toFixed(2) + "°");
+      putRead("multiplier", result.elevation > 0 ? "×" + result.shadowMultiplier.toFixed(3) : "no shadow");
+    } else {
+      // Azimuth-only is offered as a mode, not reported as a failure.
+      putRead("elevation", "azimuth-only mode");
+      putRead("multiplier", "—");
+    }
+    putRead("azimuth", result.azimuth === null
+      ? (result.azimuthRelative === null ? "needs a reference" : result.azimuthRelative.toFixed(2) + "° relative")
+      : result.azimuth.toFixed(2) + "°");
+
+    Gnomon.debug.set("sun", "d_up", "[" + result.dUp.map(Gnomon.fmt).join(", ") + "]");
+    Gnomon.debug.set("sun", "d_shadow", "[" + result.dShadow.map(Gnomon.fmt).join(", ") + "]");
+    Gnomon.debug.set("sun", "d_ray (top→tip)", "[" + result.dRay.map(Gnomon.fmt).join(", ") + "]");
+    Gnomon.debug.set("sun", "d_sun (toward)", "[" + result.dSun.map(Gnomon.fmt).join(", ") + "]");
+    Gnomon.debug.set("sun", "determinant", result.determinant);
+    Gnomon.debug.set("sun", "residual (deg)", result.residual);
+    Gnomon.debug.set("sun", "elevation", result.elevation);
+    Gnomon.debug.set("sun", "azimuth (relative)", result.azimuthRelative === null ? "no reference" : result.azimuthRelative);
+    Gnomon.debug.set("sun", "azimuth (from north)", result.azimuth === null ? "no bearing" : result.azimuth);
+    Gnomon.debug.set("sun", "elevation usable", result.elevationUsable);
     return result;
   }
 

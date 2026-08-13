@@ -11,7 +11,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G5  | #6  | Image, EXIF, and metadata integrity flags | yes | **shipped** — [G5.md](G5.md) |
 | G6  | #7  | Marking: objects, loupe, and the three line families | yes | **shipped** — [G6.md](G6.md) |
 | G7  | #8  | Calibration cascade: five tiers, fall-through, and disagreement | yes | **shipped** — [G7.md](G7.md) |
-| G8  | #9  | Sun direction, sign resolution, and the validity residual | yes | pending |
+| G8  | #9  | Sun direction, sign resolution, and the validity residual | yes | **shipped** — [G8.md](G8.md) |
 | G9  | #10 | Monte Carlo uncertainty and the azimuth-only fallback | yes | pending |
 | G10 | #11 | Inverse solve: the global elevation-and-azimuth grid | yes | pending |
 | G11 | #16 | Map: orthographic globe, bundled coastlines, soft band | yes | pending |
