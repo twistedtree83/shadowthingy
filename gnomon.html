@@ -1385,6 +1385,184 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── calib ───────────────────────────────────────────────────────────────
+     The focal-length cascade. Five methods, tried in order, first success wins.
+
+     The tier that succeeded is recorded and SETS THE SWEEP WIDTH that G9's
+     Monte Carlo samples across. That is the mechanism by which weak provenance
+     becomes a visibly wide band, and it is the machinery behind the project's
+     central rule: a stripped or cropped image must produce a visibly wide band,
+     not a narrow one that happens to be wrong.
+     ──────────────────────────────────────────────────────────────────────── */
+  const calib = (function () {
+    // The 35mm "equivalent" focal length is defined against a 36mm-wide frame.
+    const FILM_WIDTH_MM = 36;
+
+    // Sweep is a relative half-width: the Monte Carlo samples f across
+    // f·(1 ± sweep). The ordering is the whole point — a weaker method must
+    // never be able to claim a narrower band than a stronger one.
+    const SWEEPS = { 1: 0.02, 2: 0.05, 3: 0.10, 4: 0.15 };
+
+    // Tier 5's prior: 1.0–1.4 image widths covers the overwhelming majority of
+    // cameras and phones ever pointed at anything.
+    const PRIOR_LOW = 1.0, PRIOR_HIGH = 1.4;
+
+    // A crop moves the principal point somewhere unknown, and every tier
+    // depends on it. Widening rather than refusing keeps an answer available
+    // while making its uncertainty visible, which is the honest trade.
+    const CROP_PENALTY = 4;
+
+    /* Two orthogonal directions with vanishing points v1 and v2 satisfy
+         (u1-cx)(u2-cx) + (v1-cy)(v2-cy) + f^2 = 0
+       for square pixels and no skew, so f^2 = -(v1-c).(v2-c).
+
+       That needs a NEGATIVE dot product for a real f. On a positive one this
+       returns null so the cascade falls through. Taking an absolute value,
+       clamping, or returning an imaginary component would be the single most
+       damaging bug in the app — it would look like a successful mid-tier
+       calibration rather than a failure. */
+    function focalFromOrthogonalPoints(p1, p2, c) {
+      if (!p1 || !p2) return null;
+      const dot = (p1.x - c[0]) * (p2.x - c[0]) + (p1.y - c[1]) * (p2.y - c[1]);
+      if (!(dot < 0)) return null;
+      return Math.sqrt(-dot);
+    }
+
+    // A rectangle in the world gives two pairs of parallel edges whose
+    // directions are orthogonal — the same constraint as Tier 4, but from a
+    // shape the user can point at rather than from the marks.
+    function rectangleVanishingPoints(corners) {
+      if (!corners || corners.length !== 4) return null;
+      const P = corners.map(function (p) { return geom.point(p[0], p[1]); });
+      const a = geom.meet(geom.lineThrough(P[0], P[1]), geom.lineThrough(P[3], P[2]));
+      const b = geom.meet(geom.lineThrough(P[1], P[2]), geom.lineThrough(P[0], P[3]));
+      if (geom.atInfinity(a) || geom.atInfinity(b)) return null;
+      return [geom.dehomogenise(a), geom.dehomogenise(b)];
+    }
+
+    function solve(input) {
+      const m = input.meta || {};
+      const width = input.imageWidth;
+      const height = input.imageHeight;
+      const centre = input.principalPoint || [width / 2, height / 2];
+      const candidates = [];
+      const notes = [];
+
+      /* Field of view is unchanged by a resize, so the decoded width is already
+         the right basis and there is no second rescaling to apply — applying
+         one would be wrong by exactly the resize ratio. A crop is different:
+         the decoded width spans only part of the recorded field of view, so the
+         recorded width is the better basis, and the widened sweep below is how
+         that uncertainty gets declared. */
+      const focalBasis = m.cropped && m.exifWidth ? m.exifWidth : width;
+
+      // Tier 1 — 35mm equivalent. Digital zoom is already folded in by meta.
+      if (Number.isFinite(m.effectiveFocal35) && m.effectiveFocal35 > 0) {
+        candidates.push({
+          tier: 1, method: "exif-35mm",
+          focalPx: (m.effectiveFocal35 / FILM_WIDTH_MM) * focalBasis,
+          sweep: SWEEPS[1],
+        });
+      }
+
+      // Tier 2 — physical focal length over a looked-up sensor width.
+      if (Number.isFinite(m.focalLength) && m.focalLength > 0
+          && Number.isFinite(m.sensorWidth) && m.sensorWidth > 0) {
+        const zoom = Number.isFinite(m.digitalZoomRatio) && m.digitalZoomRatio > 0 ? m.digitalZoomRatio : 1;
+        candidates.push({
+          tier: 2, method: "exif-sensor",
+          focalPx: ((m.focalLength * zoom) / m.sensorWidth) * focalBasis,
+          sweep: SWEEPS[2],
+        });
+      }
+
+      // Tier 3 — a user-marked scene rectangle.
+      const rectPoints = rectangleVanishingPoints(input.rectangle);
+      if (rectPoints) {
+        const f = focalFromOrthogonalPoints(rectPoints[0], rectPoints[1], centre);
+        if (f !== null) candidates.push({ tier: 3, method: "scene-rectangle", focalPx: f, sweep: SWEEPS[3] });
+        else notes.push("The marked rectangle's vanishing points fall on the same side of the principal point, which cannot describe a real rectangle seen through a pinhole.");
+      }
+
+      // Tier 4 — the marks already placed. Free, and the reason a stripped
+      // image produces an answer at all.
+      const vp = input.vanishing;
+      if (vp && vp.z && vp.shadow) {
+        if (vp.z.atInfinity || vp.shadow.atInfinity) {
+          // Not a poor answer — no equation left to solve. A level camera sends
+          // verticals to infinity and the orthogonality constraint degenerates.
+          notes.push("A vanishing point is at infinity, so the orthogonality constraint degenerates and cannot fix a focal length.");
+        } else {
+          const f = focalFromOrthogonalPoints(vp.z.point, vp.shadow.point, centre);
+          if (f !== null) candidates.push({ tier: 4, method: "orthogonal-vanishing-points", focalPx: f, sweep: SWEEPS[4] });
+          else notes.push("v_z and v_shadow fall on the same side of the principal point, so no real focal length satisfies the orthogonality constraint. Falling through to the prior.");
+        }
+      }
+
+      // Tier 5 — the prior. Always available, deliberately wide.
+      const priorMid = ((PRIOR_LOW + PRIOR_HIGH) / 2) * width;
+      candidates.push({
+        tier: 5, method: "prior",
+        focalPx: priorMid,
+        sweep: (((PRIOR_HIGH - PRIOR_LOW) / 2) * width) / priorMid,
+      });
+
+      candidates.sort(function (a, b) { return a.tier - b.tier; });
+      const chosen = candidates[0];
+
+      /* Two independent estimates diverging is evidence about the image — a
+         crop, a digital zoom, or fabricated metadata. They are reported side by
+         side and never averaged: averaging would destroy exactly the signal
+         that makes the divergence worth seeing. */
+      const exifCandidate = candidates.find(function (c) { return c.tier === 1 || c.tier === 2; });
+      const geometryCandidate = candidates.find(function (c) { return c.tier === 3 || c.tier === 4; });
+      let disagreement = null;
+      if (exifCandidate && geometryCandidate) {
+        const ratio = geometryCandidate.focalPx / exifCandidate.focalPx;
+        // Tier 4's own sweep is +/-15%, so a divergence has to clear that
+        // before it means anything more than the method's own looseness.
+        if (Math.abs(ratio - 1) > 0.15) {
+          disagreement = {
+            exif: exifCandidate.focalPx,
+            geometry: geometryCandidate.focalPx,
+            ratio: ratio,
+            percent: (ratio - 1) * 100,
+            exifMethod: exifCandidate.method,
+            geometryMethod: geometryCandidate.method,
+          };
+        }
+      }
+
+      const sweep = chosen.sweep * (m.cropped ? CROP_PENALTY : 1);
+      if (m.cropped) {
+        notes.push("The image is cropped, so the principal point is unknown and every focal-length estimate rests on it. The sweep is widened " + CROP_PENALTY + "x to say so.");
+      }
+
+      return {
+        tier: chosen.tier,
+        method: chosen.method,
+        focalPx: chosen.focalPx,
+        sweep: sweep,
+        range: [chosen.focalPx * (1 - sweep), chosen.focalPx * (1 + sweep)],
+        candidates: candidates,
+        disagreement: disagreement,
+        principalPoint: centre,
+        principalPointTrustworthy: m.principalPointTrustworthy !== false,
+        meta: m,
+        notes: notes,
+      };
+    }
+
+    return {
+      SWEEPS: SWEEPS,
+      PRIOR_LOW: PRIOR_LOW,
+      PRIOR_HIGH: PRIOR_HIGH,
+      solve: solve,
+      focalFromOrthogonalPoints: focalFromOrthogonalPoints,
+      rectangleVanishingPoints: rectangleVanishingPoints,
+    };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -1487,13 +1665,14 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.5.0",
+    version: "0.6.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
     meta: meta,
     solar: solar,
     geom: geom,
+    calib: calib,
     synth: synth,
   };
 })();
@@ -1827,6 +2006,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     prefillFrom(analysis);
     renderMarks();
     redraw();
+    recalibrate();
 
     Gnomon.debug.set("image", "decoded", size.width + "×" + size.height);
     Gnomon.debug.set("image", "exif orientation", orientation);
@@ -2238,6 +2418,88 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   bearingInput.addEventListener("input", function () {
     if (window.gnomonOnMarksChanged) window.gnomonOnMarksChanged();
   });
+
+  /* ── calibration readout ───────────────────────────────────────────────────
+     Runs whenever the marks or the image change. The tier is shown as
+     prominently as the focal length itself, because the tier is what says how
+     much the number is worth. */
+  const TIER_NAMES = {
+    1: "1 · EXIF 35mm equivalent",
+    2: "2 · EXIF focal ÷ sensor",
+    3: "3 · scene rectangle",
+    4: "4 · orthogonal vanishing points",
+    5: "5 · statistical prior",
+  };
+
+  function recalibrate() {
+    if (!state.image) return null;
+    const result = Gnomon.calib.solve({
+      meta: state.meta || {},
+      imageWidth: state.image.width,
+      imageHeight: state.image.height,
+      vanishing: currentFamilies(),
+      rectangle: state.rectangle.length === 4 ? state.rectangle : null,
+    });
+    state.calibration = result;
+
+    putRead("tier", TIER_NAMES[result.tier] || String(result.tier));
+    putRead("focal", Math.round(result.focalPx) + " px  ±" + (result.sweep * 100).toFixed(0) + "%");
+
+    Gnomon.debug.clear("calibration");
+    for (const c of result.candidates) {
+      Gnomon.debug.set("calibration", "tier " + c.tier + " (" + c.method + ")",
+        Math.round(c.focalPx) + " px ±" + (c.sweep * 100).toFixed(0) + "%");
+    }
+    Gnomon.debug.set("calibration", "chosen", "tier " + result.tier + " — " + Math.round(result.focalPx) + " px");
+    Gnomon.debug.set("calibration", "range",
+      Math.round(result.range[0]) + " – " + Math.round(result.range[1]) + " px");
+    Gnomon.debug.set("calibration", "principal point",
+      "[" + result.principalPoint.map(Math.round).join(", ") + "]" +
+      (result.principalPointTrustworthy ? "" : " (untrusted — cropped)"));
+    if (result.disagreement) {
+      Gnomon.debug.set("calibration", "disagreement",
+        Math.round(result.disagreement.exif) + " px (EXIF) vs " +
+        Math.round(result.disagreement.geometry) + " px (geometry)");
+    }
+
+    renderCalibrationNotes(result);
+    renderDebug();
+    return result;
+  }
+
+  /* A disagreement between EXIF and geometry is a forensic signal, not an error,
+     so it sits alongside the integrity flags rather than reading as a warning
+     about the tool. */
+  function renderCalibrationNotes(result) {
+    const region = document.querySelector("#region-result .result-body");
+    region.querySelectorAll(".calib-notes").forEach(function (n) { n.remove(); });
+
+    const extra = [];
+    if (result.disagreement) {
+      const d = result.disagreement;
+      extra.push({
+        severity: "loud",
+        kind: "focal disagreement",
+        message: "EXIF implies " + Math.round(d.exif) + " px; the geometry of your marks implies " +
+          Math.round(d.geometry) + " px — a " + Math.abs(d.percent).toFixed(0) + "% divergence. " +
+          "Both are shown and neither is averaged away: two independent estimates disagreeing is evidence " +
+          "about the image — a crop, a digital zoom, or fabricated metadata.",
+      });
+    }
+    for (const note of result.notes) extra.push({ severity: "quiet", kind: "calibration", message: note });
+    if (!extra.length) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "flags calib-notes";
+    wrap.innerHTML = extra.map(function (f) {
+      return '<div class="flag ' + f.severity + '"><span class="tag">' + esc(f.kind) +
+             '</span><span class="msg">' + esc(f.message) + "</span></div>";
+    }).join("");
+    region.appendChild(wrap);
+  }
+
+  window.gnomonOnMarksChanged = recalibrate;
+  window.gnomonRecalibrate = recalibrate;
 
   // Exposed so a browser test can place marks without synthesising pointer
   // events at fractional device pixels.

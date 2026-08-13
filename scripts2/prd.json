@@ -67,7 +67,7 @@
       "id": "G7",
       "issue": 8,
       "title": "Calibration cascade: five tiers, fall-through, and disagreement",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G4",

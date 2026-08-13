@@ -57,6 +57,11 @@ process.stdout.write(JSON.stringify({
   claim: CLAIM,
   imageSize: SPEC.camera.imageSize,
   objects: scene.objects,
+  // The 35mm equivalent implied by the camera actually used, so the fixture's
+  // EXIF agrees with its own geometry. Deriving it rather than writing a
+  // plausible-looking 35mm is the difference between a clean fixture and one
+  // that trips the disagreement detector for a reason that is not real.
+  focal35mm: (SPEC.camera.focal / SPEC.camera.imageSize[0]) * 36,
   truth: {
     focal: scene.truth.focal,
     principal: scene.truth.principal,

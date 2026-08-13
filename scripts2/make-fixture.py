@@ -10,6 +10,7 @@ Produces, under samples/ (gitignored — the repo never holds imagery):
   scene-cropped.jpg   16:9 crop of the same frame, EXIF still claims 3:2
   scene-resized.jpg   half size, aspect preserved
   scene-stripped.jpg  no EXIF at all
+  scene-faked.jpg     EXIF focal length that contradicts the geometry
   scene-rotated.jpg   portrait bytes with Orientation=6
 
 Run: node scripts2/fixture-scene.js > samples/scene.json && python3 scripts2/make-fixture.py
@@ -54,7 +55,10 @@ def draw_scene(width, height):
     return img
 
 
-def exif_bytes(exif_w, exif_h, orientation=1):
+FOCAL_35MM = scene["focal35mm"]
+
+
+def exif_bytes(exif_w, exif_h, orientation=1, focal35=None):
     zeroth = {
         piexif.ImageIFD.Make: b"FUJIFILM",
         piexif.ImageIFD.Model: b"X-T4",
@@ -64,7 +68,9 @@ def exif_bytes(exif_w, exif_h, orientation=1):
         piexif.ExifIFD.DateTimeOriginal: b"2023:12:22 15:20:00",
         piexif.ExifIFD.OffsetTimeOriginal: b"+11:00",
         piexif.ExifIFD.FocalLength: (23, 1),
-        piexif.ExifIFD.FocalLengthIn35mmFilm: 35,
+        piexif.ExifIFD.FocalLengthIn35mmFilm: round(
+            FOCAL_35MM if focal35 is None else focal35
+        ),
         piexif.ExifIFD.PixelXDimension: exif_w,
         piexif.ExifIFD.PixelYDimension: exif_h,
         piexif.ExifIFD.DigitalZoomRatio: (1, 1),
@@ -100,6 +106,16 @@ full.resize((W // 2, H // 2), Image.LANCZOS).save(
 
 full.save(os.path.join(SAMPLES, "scene-stripped.jpg"), quality=92)
 
+# Metadata that lies. The geometry says one focal length and the EXIF claims a
+# very different one — which is what a crop, a digital zoom or a fabricated tag
+# looks like from the outside. The app must surface the divergence rather than
+# average it away.
+full.save(
+    os.path.join(SAMPLES, "scene-faked.jpg"),
+    quality=92,
+    exif=exif_bytes(W, H, focal35=round(FOCAL_35MM * 1.6)),
+)
+
 # Orientation 6: the bytes are stored rotated and the tag says "rotate me back
 # 90° CW". An app that ignores the tag gets a sideways world where nothing
 # vertical is vertical.
@@ -114,7 +130,7 @@ rotated.save(
     exif=exif_bytes(rotated.width, rotated.height, orientation=6),
 )
 
-print("wrote 5 fixtures to samples/")
+print("wrote 6 fixtures to samples/")
 for obj in scene["objects"]:
     print(
         "  base %-18s top %-18s tip %s"
