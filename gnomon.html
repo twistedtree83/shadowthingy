@@ -2554,6 +2554,139 @@ var Gnomon = (function () {
     return { verify: verify, timeWindows: timeWindows, clock: clock, FIT_FLOOR: FIT_FLOOR };
   })();
 
+  /* ── guards ──────────────────────────────────────────────────────────────
+     The places where the geometry stops being trustworthy.
+
+     These are product requirements rather than polish, and each exists because
+     of a specific identified failure mode. A guard that fires must CHANGE what
+     the user sees — `confident: false` is what the result region reads to
+     withhold an answer, rather than printing one with a caption beside it.
+     ──────────────────────────────────────────────────────────────────────── */
+  const guards = (function () {
+    // Below this, refraction dominates, shadow tips become indistinct against
+    // the ground, and small marking errors produce large angular errors.
+    const LOW_SUN = 5;
+
+    // Within this much of zero declination the sun's path is nearly identical
+    // across a wide span of latitudes, so the latitude constraint is at its
+    // weakest and the band is legitimately wide.
+    const EQUINOX_DECLINATION = 4;
+
+    /* The residual is judged against the marking-noise floor rather than a
+       constant.
+
+       G9 measured that its scale depends entirely on marking precision and
+       scene geometry — 3px of noise on a small pole produces about 5° of
+       residual on a perfectly valid scene. A fixed threshold would fire on
+       every real photograph, and a guard that cries wolf is one people learn to
+       ignore, which is worse than not having it. */
+    const RESIDUAL_WARN_RATIO = 1.5;
+    const RESIDUAL_REFUSE_RATIO = 6;
+
+    // Above this the noise floor has swamped the check: the residual cannot
+    // detect a broken assumption here whatever it reads, and saying so is more
+    // useful than silently not firing.
+    const WEAK_CHECK_FLOOR = 5;
+
+    // Stated with every answer, because no projective check can test them.
+    const ASSUMPTIONS = [
+      "The marked objects are vertical with respect to gravity. An object perpendicular to a slope instead — a fence post on a hillside — yields an elevation measured from the wrong horizon, with a residual of exactly zero. Nothing in the geometry can detect this.",
+      "The ground under each marked object is locally flat. A uniform slope is harmless; differently-sloped patches under different objects are not, and do raise the residual.",
+      "The lens follows a pinhole model. Barrel or pincushion distortion violates it and shows up only as a raised residual, never as a correction.",
+      "The light source is the sun, at effectively infinite distance.",
+    ];
+
+    function evaluate(input) {
+      const fired = [];
+      const add = function (id, severity, title, message) {
+        fired.push({ id: id, severity: severity, title: title, message: message });
+      };
+
+      const elevation = input.elevation;
+      const unbounded = !elevation || elevation.unbounded === true;
+
+      if (unbounded) {
+        add("unbounded", "refuse", "The sun's direction is unbounded",
+          "The marks do not fix a direction well enough to measure. This is not a wide answer — " +
+          "it is the absence of one, and it must not be read as a wide answer.");
+      }
+
+      /* The refusal triggers on the BAND, not on the median. A band reaching
+         down into the unreliable regime is unreliable even if its midpoint
+         looks respectable. */
+      if (!unbounded && Number.isFinite(elevation.p5) && elevation.p5 < LOW_SUN) {
+        add("low-sun", "refuse", "The sun is too low for a confident answer",
+          "Part of the measured band falls below " + LOW_SUN + "°. Down there refraction dominates, " +
+          "shadow tips blur into the ground, and a pixel of marking error becomes a large angular " +
+          "error. Any number from this regime should be treated as indicative only.");
+      }
+
+      // Declination, not the calendar: equinox dates drift year to year and the
+      // declination is what actually governs the constraint.
+      if (input.date && input.place) {
+        const noon = solar.position({
+          year: input.date.year, month: input.date.month, day: input.date.day,
+          minutes: 720, tzOffsetHours: input.date.tzOffsetHours || 0,
+          latitude: input.place.latitude, longitude: input.place.longitude,
+        });
+        if (Math.abs(noon.declination) < EQUINOX_DECLINATION) {
+          add("near-equinox", "warn", "Near an equinox — latitude is weakly constrained",
+            "The declination is " + noon.declination.toFixed(1) + "°, so the sun's path is nearly " +
+            "the same across a wide span of latitudes. The band is genuinely wide here rather than " +
+            "imprecisely measured, and elevation alone will not pin down how far north or south you are.");
+        }
+      }
+
+      const residual = input.residual;
+      const floor = Number.isFinite(input.residualNoiseFloor) ? input.residualNoiseFloor : 0;
+
+      if (floor > WEAK_CHECK_FLOOR) {
+        add("weak-residual-check", "warn", "The validity check has little power here",
+          "Marking noise alone produces about " + floor.toFixed(1) + "° of residual on this scene, " +
+          "so the coplanarity check cannot tell a broken assumption from an imprecise click. " +
+          "Marking larger objects, or marking them more precisely, would give it something to work with.");
+      } else if (Number.isFinite(residual)) {
+        const reference = Math.max(floor, 0.2);
+        const ratio = residual / reference;
+        if (ratio >= RESIDUAL_REFUSE_RATIO) {
+          add("residual", "refuse", "The scene is not internally consistent",
+            "The coplanarity residual is " + residual.toFixed(2) + "°, against roughly " +
+            reference.toFixed(2) + "° explainable by marking noise. Something has broken: sloped " +
+            "ground under one object, a leaning object marked as vertical, lens distortion, or " +
+            "compositing. The recovered direction rests on an assumption that does not hold.");
+        } else if (ratio >= RESIDUAL_WARN_RATIO) {
+          add("residual", "warn", "The residual is higher than marking noise explains",
+            "The coplanarity residual is " + residual.toFixed(2) + "°, against roughly " +
+            reference.toFixed(2) + "° explainable by marking noise. Worth checking that every marked " +
+            "object really is vertical and standing on the same flat ground.");
+        }
+      }
+
+      if (input.meta && input.meta.cropped) {
+        add("cropped", "warn", "The image is cropped",
+          "The principal point is no longer the centre of the frame, and every focal-length " +
+          "estimate rests on it. The band has been widened to account for that, but a crop is also " +
+          "worth knowing about for its own sake.");
+      }
+
+      const refusing = fired.some(function (g) { return g.severity === "refuse"; });
+      return {
+        fired: fired,
+        confident: !refusing,
+        assumptions: ASSUMPTIONS.slice(),
+        thresholds: {
+          lowSun: LOW_SUN,
+          equinoxDeclination: EQUINOX_DECLINATION,
+          residualWarnRatio: RESIDUAL_WARN_RATIO,
+          residualRefuseRatio: RESIDUAL_REFUSE_RATIO,
+          weakCheckFloor: WEAK_CHECK_FLOOR,
+        },
+      };
+    }
+
+    return { evaluate: evaluate, ASSUMPTIONS: ASSUMPTIONS };
+  })();
+
   /* The six solar invariants, shown in the panel so a sceptical user can
      confirm the engine rather than trust it. Each is DERIVED — where a physical
      constant appears it is checked against the value the algorithm computed for
@@ -2656,7 +2789,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.10.0",
+    version: "0.11.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -2668,6 +2801,7 @@ var Gnomon = (function () {
     montecarlo: montecarlo,
     grid: grid,
     modes: modes,
+    guards: guards,
     synth: synth,
   };
 })();
@@ -3953,6 +4087,39 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     return { elevation: u.elevation, azimuth: u.azimuth };
   }
 
+  function evaluateGuards() {
+    const u = state.uncertainty;
+    if (!u || !state.sun) return null;
+    const args = readSolarInputs();
+    return Gnomon.guards.evaluate({
+      elevation: u.elevation,
+      azimuth: u.azimuth,
+      // The UNPERTURBED residual is the signal; the sampled band is the noise
+      // floor it has to be judged against. G9 measured that using the band as
+      // the detector fires on clean scenes and stays quiet on broken ones.
+      residual: state.sun.residual,
+      residualNoiseFloor: u.residual ? u.residual.p50 : 0,
+      date: args,
+      place: args ? { latitude: args.latitude, longitude: args.longitude } : null,
+      meta: state.meta || {},
+      calibration: state.calibration,
+    });
+  }
+
+  function renderGuards(body, verdict) {
+    if (!verdict || !verdict.fired.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "flags";
+    wrap.style.padding = "0";
+    wrap.style.marginBottom = ".6rem";
+    wrap.innerHTML = verdict.fired.map(function (g) {
+      return '<div class="flag ' + (g.severity === "refuse" ? "loud" : "quiet") + '">' +
+        '<span class="tag">' + esc(g.severity === "refuse" ? "refused" : "warning") + "</span>" +
+        '<span class="msg"><b>' + esc(g.title) + ".</b> " + esc(g.message) + "</span></div>";
+    }).join("");
+    body.appendChild(wrap);
+  }
+
   function renderResult() {
     const body = document.querySelector("#region-result .result-body");
     const measured = measuredBands();
@@ -3970,10 +4137,40 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
       return;
     }
 
+    const verdict = evaluateGuards();
+    state.guards = verdict;
+
+    /* A refusal has to CHANGE what the user sees, not sit beside an unchanged
+       confident number. When a guard refuses, the answer is replaced by the
+       refusal — the numbers are still available in the debug panel for anyone
+       who needs them, but they do not get to look like a finding. */
+    if (verdict && !verdict.confident) {
+      body.innerHTML = '<div class="verdict cannot-tell">' +
+        '<span class="tag">answer withheld</span>' +
+        '<div class="sentence">The geometry does not support a confident answer here. ' +
+        'What follows is why — the underlying numbers are in the debug panel, but they are not ' +
+        'a finding.</div></div>';
+      renderGuards(body, verdict);
+      renderIntegrityFlags(body);
+      markReadoutUnreliable(true);
+      return;
+    }
+    markReadoutUnreliable(false);
+
     if (currentMode() === "verify") renderVerify(body, measured, args);
     else if (currentMode() === "time") renderTime(body, measured, args);
     else renderLocate(body, measured);
+    renderGuards(body, verdict);
     renderIntegrityFlags(body);
+  }
+
+  // The readout's sun figures are dimmed when a guard has refused, so a number
+  // that is no longer a finding does not keep looking like one.
+  function markReadoutUnreliable(unreliable) {
+    for (const key of ["elevation", "azimuth", "multiplier"]) {
+      const el = document.querySelector('[data-read="' + key + '"]');
+      if (el) el.style.opacity = unreliable ? "0.4" : "";
+    }
   }
 
   // The metadata and calibration flags follow whichever mode is showing, since

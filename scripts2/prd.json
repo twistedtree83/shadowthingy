@@ -140,7 +140,7 @@
       "id": "G14",
       "issue": 19,
       "title": "Guards: low sun, the equinoxes, and a broken residual",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G13"
