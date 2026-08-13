@@ -555,6 +555,196 @@ var Gnomon = (function () {
     };
   })();
 
+  /* ── synth ───────────────────────────────────────────────────────────────
+     The synthetic scene generator. Builds a 3D scene with known camera, known
+     sun and known poles, computes each shadow tip analytically, and projects
+     everything to image coordinates — so a test can feed the result back
+     through the pipeline as if it were user clicks and compare against truth.
+
+     World frame is East-North-Up: +X east, +Y north, +Z up.
+     Camera frame is the usual pinhole: +X right, +Y down, +Z forward.
+     ──────────────────────────────────────────────────────────────────────── */
+  const synth = (function () {
+    const D2R = Math.PI / 180;
+
+    function add(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+    function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+    function mul(v, s) { return [v[0] * s, v[1] * s, v[2] * s]; }
+    function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+    function cross3(a, b) {
+      return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+    }
+    function unit3(v) {
+      const n = Math.hypot(v[0], v[1], v[2]);
+      return n === 0 ? [0, 0, 0] : mul(v, 1 / n);
+    }
+
+    // Rodrigues rotation of v about unit axis k by angle (radians).
+    function rotate(v, k, angle) {
+      const c = Math.cos(angle), s = Math.sin(angle);
+      return add(add(mul(v, c), mul(cross3(k, v), s)), mul(k, dot3(k, v) * (1 - c)));
+    }
+
+    // Unit vector pointing FROM the ground TOWARD the sun. Azimuth is measured
+    // from north, clockwise, so azimuth 90° is due east.
+    function sunVector(sun) {
+      const a = sun.azimuth * D2R, e = sun.elevation * D2R;
+      return [Math.sin(a) * Math.cos(e), Math.cos(a) * Math.cos(e), Math.sin(e)];
+    }
+
+    /* Camera axes in world coordinates. Starts level and facing north, then
+       applies yaw (compass bearing), pitch (positive tilts up) and roll
+       (positive rolls clockwise as seen by the photographer). */
+    function cameraAxes(camera) {
+      const yaw = (camera.yaw || 0) * D2R;
+      const pitch = (camera.pitch || 0) * D2R;
+      const roll = (camera.roll || 0) * D2R;
+
+      let forward = [Math.sin(yaw), Math.cos(yaw), 0];
+      let right = [Math.cos(yaw), -Math.sin(yaw), 0];
+      let down = [0, 0, -1];
+
+      // Pitch about the camera's own right axis, so it tips the lens rather
+      // than swinging it — the two differ once yaw is non-zero.
+      forward = rotate(forward, right, pitch);
+      down = rotate(down, right, pitch);
+
+      right = rotate(right, forward, roll);
+      down = rotate(down, forward, roll);
+
+      return { right: unit3(right), down: unit3(down), forward: unit3(forward) };
+    }
+
+    function project(camera, axes, worldPoint) {
+      const d = sub(worldPoint, camera.position);
+      const z = dot3(axes.forward, d);
+      if (z <= 1e-9) {
+        throw new Error("point is behind the camera and cannot be marked");
+      }
+      return [
+        camera.focal * (dot3(axes.right, d) / z) + camera.principal[0],
+        camera.focal * (dot3(axes.down, d) / z) + camera.principal[1],
+      ];
+    }
+
+    /* The vanishing point of a world direction is its projection with the
+       translation dropped: v = K·R·d, kept homogeneous so a direction parallel
+       to the image plane comes back with w = 0 rather than dividing by it. */
+    function analyticVanishingPoint(camera, axes, direction) {
+      const d = unit3(direction);
+      const w = dot3(axes.forward, d);
+      return [
+        camera.focal * dot3(axes.right, d) + camera.principal[0] * w,
+        camera.focal * dot3(axes.down, d) + camera.principal[1] * w,
+        w,
+      ];
+    }
+
+    function groundPoint(normal, x, y) {
+      // The global ground plane passes through the origin with the given
+      // normal, so z follows from n·P = 0.
+      const n = unit3(normal);
+      if (Math.abs(n[2]) < 1e-9) throw new Error("ground plane is vertical");
+      return [x, y, -(n[0] * x + n[1] * y) / n[2]];
+    }
+
+    function poleDirection(lean) {
+      if (!lean) return [0, 0, 1];
+      const t = lean.tilt * D2R, b = (lean.bearing || 0) * D2R;
+      return [Math.sin(t) * Math.sin(b), Math.sin(t) * Math.cos(b), Math.cos(t)];
+    }
+
+    function scene(spec) {
+      const camera = spec.camera;
+      const axes = cameraAxes(camera);
+      const globalNormal = unit3(spec.groundNormal || [0, 0, 1]);
+      const globalSun = sunVector(spec.sun);
+
+      const world = spec.poles.map(function (pole) {
+        const base = groundPoint(globalNormal, pole.base[0], pole.base[1]);
+        const dir = poleDirection(pole.lean);
+        const top = add(base, mul(dir, pole.height));
+
+        // Per-pole overrides model the cases that actually break coplanarity: a
+        // differently-sloped patch of ground, or an object composited in from a
+        // photograph with a different sun.
+        const normal = pole.groundNormal ? unit3(pole.groundNormal) : globalNormal;
+        const sun = pole.sun ? sunVector(pole.sun) : globalSun;
+
+        const denom = dot3(normal, sun);
+        if (denom <= 1e-9) {
+          throw new Error("the sun is at or below this pole's ground plane — no shadow exists");
+        }
+        // The ray from the top runs away from the sun; it meets the local plane
+        // through the base after a distance proportional to the pole's height.
+        const t = (pole.height * dot3(normal, dir)) / denom;
+        const tip = sub(top, mul(sun, t));
+
+        return { base: base, top: top, tip: tip, direction: dir, sun: sun, normal: normal };
+      });
+
+      const objects = world.map(function (w) {
+        return {
+          base: project(camera, axes, w.base),
+          top: project(camera, axes, w.top),
+          tip: project(camera, axes, w.tip),
+        };
+      });
+
+      // Truth directions, for the round trip to compare against. The shadow
+      // direction is the ground-plane component of the anti-sun ray.
+      const up = [0, 0, 1];
+      const rayDir = mul(globalSun, -1);
+      const shadowDir = unit3(sub(world[0].tip, world[0].base));
+
+      return {
+        spec: spec,
+        camera: camera,
+        axes: axes,
+        world: world,
+        objects: objects,
+        truth: {
+          focal: camera.focal,
+          principal: camera.principal.slice(),
+          elevation: spec.sun.elevation,
+          azimuth: spec.sun.azimuth,
+          sunVector: globalSun,
+          upDirection: up,
+          shadowDirection: shadowDir,
+          rayDirection: rayDir,
+          vanishing: {
+            z: analyticVanishingPoint(camera, axes, up),
+            shadow: analyticVanishingPoint(camera, axes, shadowDir),
+            sun: analyticVanishingPoint(camera, axes, rayDir),
+          },
+        },
+      };
+    }
+
+    // Splits marked objects into the three families geom.vanishingPoint eats.
+    // The shell uses this too, so marks and synthetic scenes travel the same path.
+    function families(objects) {
+      return {
+        vertical: objects.map(function (o) { return { a: o.base, b: o.top }; }),
+        shadow: objects.map(function (o) { return { a: o.base, b: o.tip }; }),
+        ray: objects.map(function (o) { return { a: o.top, b: o.tip }; }),
+      };
+    }
+
+    return {
+      sunVector: sunVector,
+      cameraAxes: cameraAxes,
+      project: project,
+      analyticVanishingPoint: analyticVanishingPoint,
+      scene: scene,
+      families: families,
+    };
+  })();
+
   /* Registered on the shared registry, so these run in the visible panel AND in
      the headless suite from one definition. Hand-checkable cases only. */
   tests.suite("projective geometry", function (t) {
@@ -589,11 +779,12 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.2.0",
+    version: "0.3.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
     geom: geom,
+    synth: synth,
   };
 })();
 

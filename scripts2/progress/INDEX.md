@@ -7,7 +7,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G1  | #2  | Scaffold: three-region layout and the debug panel | yes | **shipped** — [G1.md](G1.md) |
 | G2  | #3  | Solar engine: NOAA position, six invariants, manual UI | yes | pending |
 | G3  | #4  | Homogeneous geometry kernel: vanishing points and conditioning | yes | **shipped** — [G3.md](G3.md) |
-| G4  | #5  | Synthetic scene generator and the vanishing-point round trip | yes | pending |
+| G4  | #5  | Synthetic scene generator and the vanishing-point round trip | yes | **shipped** — [G4.md](G4.md) |
 | G5  | #6  | Image, EXIF, and metadata integrity flags | yes | pending |
 | G6  | #7  | Marking: objects, loupe, and the three line families | yes | pending |
 | G7  | #8  | Calibration cascade: five tiers, fall-through, and disagreement | yes | pending |

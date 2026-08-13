@@ -36,7 +36,7 @@
       "id": "G4",
       "issue": 5,
       "title": "Synthetic scene generator and the vanishing-point round trip",
-      "passes": false,
+      "passes": true,
       "afk": true,
       "depends": [
         "G3"
