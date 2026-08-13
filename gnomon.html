@@ -109,6 +109,34 @@
   #map-canvas:active { cursor: grabbing; }
   .map-caption { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); text-align: center; }
 
+  .result-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .mode-tabs {
+    display: flex; align-items: center; gap: .35rem;
+    padding: .4rem 1rem; border-bottom: 1px solid var(--rule);
+  }
+  .mode-tabs button {
+    background: none; border: 1px solid transparent; color: var(--ink-faint);
+    font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    padding: .18rem .5rem; border-radius: 2px; cursor: pointer;
+  }
+  .mode-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .mode-hint { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
+
+  /* The verdict is the quotable output, so it gets the weight. */
+  .verdict { padding: .2rem 0 .7rem; }
+  .verdict .tag {
+    display: inline-block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+    text-transform: uppercase; padding: .12rem .4rem; border-radius: 2px; margin-bottom: .4rem;
+  }
+  .verdict.consistent .tag { background: var(--good); color: #0d1a10; font-weight: 600; }
+  .verdict.inconsistent .tag { background: var(--bad); color: #1f0b08; font-weight: 600; }
+  .verdict.cannot-tell .tag { border: 1px solid var(--rule); color: var(--ink-faint); }
+  .verdict .sentence { color: var(--ink); font-size: 13.5px; line-height: 1.55; }
+
+  #timeline { display: block; width: 100%; height: 92px; }
+  .window-list { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); margin-top: .4rem; }
+  .window-list .peak { color: var(--accent); }
+
   .readout-group { border-bottom: 1px solid var(--rule); padding: .75rem 1rem .9rem; }
   .readout-group h2 {
     margin: 0 0 .55rem; font-size: 10px; letter-spacing: .16em;
@@ -355,9 +383,17 @@
         <canvas id="map-canvas" width="340" height="340"></canvas>
         <div class="map-caption" id="map-caption">Drag to rotate</div>
       </div>
-      <div class="result-body">
-        No image loaded. The result region reports a band, never a point —
-        a stripped or cropped photograph should visibly widen it.
+      <div class="result-main">
+        <div class="mode-tabs">
+          <button id="tab-verify" aria-pressed="false">Verify</button>
+          <button id="tab-time" aria-pressed="false">Time</button>
+          <button id="tab-locate" aria-pressed="true">Locate</button>
+          <span class="mode-hint" id="mode-hint"></span>
+        </div>
+        <div class="result-body">
+          No image loaded. The result region reports a band, never a point —
+          a stripped or cropped photograph should visibly widen it.
+        </div>
       </div>
     </div>
   </section>
@@ -2303,16 +2339,219 @@ var Gnomon = (function () {
       return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
     }
 
+    /* How well one value fits one band, on the same Gaussian the global sweep
+       uses. Exposed so the Verify and Time modes score a fit with exactly the
+       arithmetic the map does — a second scoring function would let the timeline
+       and the globe disagree about the same instant. */
+    function fitStrength(band, value, circular) {
+      if (!band || band.unbounded === true) return 1;
+      const centre = centreOf(band);
+      if (circular) {
+        return angularStrength(value, centre, Math.max(1e-6, angularHalfWidth(band)));
+      }
+      return gaussianStrength(value, centre, Math.max(1e-6, (band.p95 - band.p5) / 2));
+    }
+
     return {
       LON_STEP: LON_STEP,
       LAT_STEP: LAT_STEP,
       FLOOR: FLOOR,
+      fitStrength: fitStrength,
+      centreOf: centreOf,
       contextFor: contextFor,
       at: at,
       solve: solve,
       strengthAt: strengthAt,
       sampleField: sampleField,
     };
+  })();
+
+  /* ── modes ───────────────────────────────────────────────────────────────
+     Three questions over the same geometry.
+
+       Verify  — place and claimed time known → a verdict.
+       Time    — place known → the windows of the day that fit.
+       Locate  — date only → the map band (G10/G11 do that one).
+
+     The scoring is grid.fitStrength, shared with the global sweep, so the
+     timeline and the globe cannot disagree about the same instant.
+     ──────────────────────────────────────────────────────────────────────── */
+  const modes = (function () {
+    // Below this a time is not a candidate. Matches the grid's floor, so a
+    // window on the timeline and a cell on the map mean the same thing.
+    const FIT_FLOOR = 0.05;
+
+    function usableBand(b) {
+      return !!b && b.unbounded !== true && Number.isFinite(b.p5) && Number.isFinite(b.p95);
+    }
+
+    // Signed shortest way round, for reporting a bearing discrepancy.
+    function angleDelta(a, b) {
+      return ((a - b + 540) % 360) - 180;
+    }
+
+    function fmt1(n) { return (Math.round(n * 10) / 10).toFixed(1); }
+
+    function clock(minutes) {
+      const wrapped = ((Math.round(minutes) % 1440) + 1440) % 1440;
+      return String(Math.floor(wrapped / 60)).padStart(2, "0") + ":" +
+             String(wrapped % 60).padStart(2, "0");
+    }
+
+    /* ── Verify ───────────────────────────────────────────────────────────── */
+    function verify(input) {
+      const place = input.place;
+      const claim = input.claim;
+      const measured = input.measured || {};
+      const predicted = solar.position({
+        year: claim.year, month: claim.month, day: claim.day,
+        minutes: claim.minutes, tzOffsetHours: claim.tzOffsetHours,
+        latitude: place.latitude, longitude: place.longitude,
+      });
+
+      const elevationUsable = usableBand(measured.elevation);
+      const azimuthUsable = usableBand(measured.azimuth);
+
+      const elevation = {
+        usable: elevationUsable,
+        measured: measured.elevation || null,
+        predicted: predicted.elevation,
+        delta: elevationUsable ? predicted.elevation - grid.centreOf(measured.elevation) : null,
+        inside: elevationUsable
+          && predicted.elevation >= measured.elevation.p5
+          && predicted.elevation <= measured.elevation.p95,
+        fit: elevationUsable ? grid.fitStrength(measured.elevation, predicted.elevation, false) : null,
+      };
+
+      const azimuth = {
+        usable: azimuthUsable,
+        measured: measured.azimuth || null,
+        predicted: predicted.azimuth,
+        delta: azimuthUsable ? angleDelta(predicted.azimuth, grid.centreOf(measured.azimuth)) : null,
+        inside: azimuthUsable
+          && Math.abs(angleDelta(predicted.azimuth, grid.centreOf(measured.azimuth)))
+             <= Math.abs(angleDelta(measured.azimuth.p95, grid.centreOf(measured.azimuth))),
+        fit: azimuthUsable ? grid.fitStrength(measured.azimuth, predicted.azimuth, true) : null,
+      };
+
+      /* Three outcomes, not two. "We cannot tell" is a real answer and must
+         never be rendered as a contradiction — an unmeasurable scene says
+         nothing about the claim either way. */
+      let verdict, sentence;
+      if (!elevationUsable && !azimuthUsable) {
+        verdict = "cannot-tell";
+        sentence = "The marks do not pin the sun down well enough to test this claim. " +
+          "Neither elevation nor bearing came back bounded, so the claimed time is " +
+          "neither supported nor contradicted.";
+      } else {
+        const checks = [];
+        if (elevationUsable) checks.push(elevation);
+        if (azimuthUsable) checks.push(azimuth);
+        const anyOutside = checks.some(function (c) { return !c.inside; });
+        verdict = anyOutside ? "inconsistent" : "consistent";
+
+        const parts = [];
+        if (elevationUsable) {
+          parts.push("a sun " + fmt1(predicted.elevation) + "° above the horizon, against " +
+            fmt1(measured.elevation.p5) + "–" + fmt1(measured.elevation.p95) + "° measured");
+        }
+        if (azimuthUsable) {
+          parts.push("a bearing of " + fmt1(predicted.azimuth) + "°, against " +
+            fmt1(measured.azimuth.p5) + "–" + fmt1(measured.azimuth.p95) + "° measured");
+        }
+
+        // Every sentence carries the discrepancy AND the tolerance, because a
+        // 47° discrepancy is a finding against ±3° and nothing against ±50°.
+        if (verdict === "inconsistent") {
+          const worst = checks.filter(function (c) { return !c.inside; })
+            .sort(function (a, b) { return Math.abs(b.delta) - Math.abs(a.delta); })[0];
+          sentence = "The claimed time implies " + parts.join(" and ") + " — off by " +
+            fmt1(Math.abs(worst.delta)) + "°, outside the measured range. Inconsistent.";
+        } else {
+          sentence = "The claimed time implies " + parts.join(" and ") +
+            ". The claim sits inside what the shadows support — consistent.";
+        }
+        if (elevationUsable && !azimuthUsable) {
+          sentence += " Bearing was not usable, so this tests elevation only.";
+        }
+      }
+
+      return {
+        predicted: { elevation: predicted.elevation, azimuth: predicted.azimuth },
+        elevation: elevation,
+        azimuth: azimuth,
+        verdict: verdict,
+        sentence: sentence,
+      };
+    }
+
+    /* ── Time ─────────────────────────────────────────────────────────────── */
+    function timeWindows(input) {
+      const place = input.place;
+      const date = input.date;
+      const measured = input.measured || {};
+      const step = input.stepMinutes || 2;
+
+      const elevationUsable = usableBand(measured.elevation);
+      const azimuthUsable = usableBand(measured.azimuth);
+
+      const samples = [];
+      for (let minutes = 0; minutes <= 1440; minutes += step) {
+        const p = solar.position({
+          year: date.year, month: date.month, day: date.day,
+          minutes: minutes, tzOffsetHours: date.tzOffsetHours,
+          latitude: place.latitude, longitude: place.longitude,
+        });
+
+        // A sun below the horizon casts no shadow, so it cannot be the moment
+        // this photograph was taken however well the numbers happen to line up.
+        let fit = p.elevation > 0 ? 1 : 0;
+        if (fit && elevationUsable) fit *= grid.fitStrength(measured.elevation, p.elevation, false);
+        if (fit && azimuthUsable) fit *= grid.fitStrength(measured.azimuth, p.azimuth, true);
+        samples.push({ minutes: minutes, fit: fit, elevation: p.elevation, azimuth: p.azimuth });
+      }
+
+      // Contiguous runs above the floor become windows. Near the solstices
+      // elevation alone gives two, either side of noon, and both are reported —
+      // the sun passes any given elevation twice a day and collapsing that to
+      // one would be exactly the false confidence the app exists to avoid.
+      const windows = [];
+      let current = null;
+      for (const s of samples) {
+        if (s.fit >= FIT_FLOOR) {
+          if (!current) current = { startMinutes: s.minutes, endMinutes: s.minutes, peakMinutes: s.minutes, peakStrength: s.fit };
+          else {
+            current.endMinutes = s.minutes;
+            if (s.fit > current.peakStrength) { current.peakStrength = s.fit; current.peakMinutes = s.minutes; }
+          }
+        } else if (current) {
+          windows.push(current);
+          current = null;
+        }
+      }
+      if (current) windows.push(current);
+
+      for (const w of windows) {
+        w.start = clock(w.startMinutes);
+        w.end = clock(w.endMinutes);
+        w.peak = clock(w.peakMinutes);
+      }
+
+      return {
+        samples: samples,
+        windows: windows,
+        stepMinutes: step,
+        // No window is a real answer: the sun never reaches that elevation here
+        // on this date. Returning the nearest time would answer a question that
+        // has no answer.
+        impossible: windows.length === 0,
+        ambiguous: windows.length > 1,
+        elevationUsable: elevationUsable,
+        azimuthUsable: azimuthUsable,
+      };
+    }
+
+    return { verify: verify, timeWindows: timeWindows, clock: clock, FIT_FLOOR: FIT_FLOOR };
   })();
 
   /* The six solar invariants, shown in the panel so a sceptical user can
@@ -2417,7 +2656,7 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.9.0",
+    version: "0.10.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
@@ -2428,6 +2667,7 @@ var Gnomon = (function () {
     sun: sun,
     montecarlo: montecarlo,
     grid: grid,
+    modes: modes,
     synth: synth,
   };
 })();
@@ -2592,8 +2832,17 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   }
 
   for (const input of solarInputs) {
-    input.addEventListener("input", renderSolar);
-    input.addEventListener("change", renderSolar);
+    input.addEventListener("input", function () { renderSolar(); onClaimChanged(); });
+    input.addEventListener("change", function () { renderSolar(); onClaimChanged(); });
+  }
+
+  // The claimed place and time feed Verify, Time and the map's marker, so a
+  // change to any of them re-asks whichever question is on screen.
+  function onClaimChanged() {
+    if (!state.image) return;
+    if (state.uncertainty) solveBand(state.uncertainty);
+    else renderResult();
+    drawMap();
   }
 
   /* ── image loading ─────────────────────────────────────────────────────────
@@ -3225,7 +3474,6 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     const solved = solveSun(result);
     if (solved) startUncertainty(result);
-    renderCalibrationNotes(result);
     renderDebug();
     return result;
   }
@@ -3292,37 +3540,6 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     Gnomon.debug.set("sun", "azimuth (from north)", result.azimuth === null ? "no bearing" : result.azimuth);
     Gnomon.debug.set("sun", "elevation usable", result.elevationUsable);
     return result;
-  }
-
-  /* A disagreement between EXIF and geometry is a forensic signal, not an error,
-     so it sits alongside the integrity flags rather than reading as a warning
-     about the tool. */
-  function renderCalibrationNotes(result) {
-    const region = document.querySelector("#region-result .result-body");
-    region.querySelectorAll(".calib-notes").forEach(function (n) { n.remove(); });
-
-    const extra = [];
-    if (result.disagreement) {
-      const d = result.disagreement;
-      extra.push({
-        severity: "loud",
-        kind: "focal disagreement",
-        message: "EXIF implies " + Math.round(d.exif) + " px; the geometry of your marks implies " +
-          Math.round(d.geometry) + " px — a " + Math.abs(d.percent).toFixed(0) + "% divergence. " +
-          "Both are shown and neither is averaged away: two independent estimates disagreeing is evidence " +
-          "about the image — a crop, a digital zoom, or fabricated metadata.",
-      });
-    }
-    for (const note of result.notes) extra.push({ severity: "quiet", kind: "calibration", message: note });
-    if (!extra.length) return;
-
-    const wrap = document.createElement("div");
-    wrap.className = "flags calib-notes";
-    wrap.innerHTML = extra.map(function (f) {
-      return '<div class="flag ' + f.severity + '"><span class="tag">' + esc(f.kind) +
-             '</span><span class="msg">' + esc(f.message) + "</span></div>";
-    }).join("");
-    region.appendChild(wrap);
   }
 
   /* ── uncertainty ───────────────────────────────────────────────────────────
@@ -3695,6 +3912,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         Gnomon.grid.strengthAt(band, claim.latitude, claim.longitude).toFixed(3));
     }
     drawMap();
+    renderResult();
     renderDebug();
     return band;
   }
@@ -3706,6 +3924,242 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   };
   window.gnomonSolveBand = solveBand;
   loadLand();
+
+
+  /* ── the three modes ───────────────────────────────────────────────────────
+     One set of marks, three questions. Switching mode never discards the
+     marking: the geometry is identical in all three cases and only the unknown
+     differs. */
+  const MODE_HINTS = {
+    verify: "place and claimed time known — is the claim possible?",
+    time: "place known — which times of day fit?",
+    locate: "date only — where on Earth fits?",
+  };
+
+  function currentMode() { return state.resultMode || "locate"; }
+
+  function setResultMode(mode) {
+    state.resultMode = mode;
+    for (const m of ["verify", "time", "locate"]) {
+      document.getElementById("tab-" + m).setAttribute("aria-pressed", String(m === mode));
+    }
+    document.getElementById("mode-hint").textContent = MODE_HINTS[mode];
+    renderResult();
+  }
+
+  function measuredBands() {
+    const u = state.uncertainty;
+    if (!u) return null;
+    return { elevation: u.elevation, azimuth: u.azimuth };
+  }
+
+  function renderResult() {
+    const body = document.querySelector("#region-result .result-body");
+    const measured = measuredBands();
+    const args = readSolarInputs();
+
+    if (!state.image) {
+      body.innerHTML = "<p style=\"margin:0\">No image loaded. The result region reports a band, " +
+        "never a point — a stripped or cropped photograph should visibly widen it.</p>";
+      return;
+    }
+    if (!measured) {
+      body.innerHTML = "<p style=\"margin:0\">Mark two or more objects to recover the sun. " +
+        "Three or more lets the fit average out your clicking.</p>";
+      renderIntegrityFlags(body);
+      return;
+    }
+
+    if (currentMode() === "verify") renderVerify(body, measured, args);
+    else if (currentMode() === "time") renderTime(body, measured, args);
+    else renderLocate(body, measured);
+    renderIntegrityFlags(body);
+  }
+
+  // The metadata and calibration flags follow whichever mode is showing, since
+  // they qualify every one of them equally.
+  function renderIntegrityFlags(body) {
+    const flags = [];
+    if (state.meta && state.meta.flags) flags.push.apply(flags, state.meta.flags);
+    if (state.calibration && state.calibration.disagreement) {
+      const d = state.calibration.disagreement;
+      flags.push({
+        severity: "loud", kind: "focal disagreement",
+        message: "EXIF implies " + Math.round(d.exif) + " px; the geometry of your marks implies " +
+          Math.round(d.geometry) + " px — a " + Math.abs(d.percent).toFixed(0) + "% divergence. " +
+          "Both are shown and neither is averaged away: two independent estimates disagreeing is " +
+          "evidence about the image — a crop, a digital zoom, or fabricated metadata.",
+      });
+    }
+    if (state.calibration) {
+      for (const note of state.calibration.notes) {
+        flags.push({ severity: "quiet", kind: "calibration", message: note });
+      }
+    }
+    if (!flags.length) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "flags";
+    wrap.style.paddingLeft = "0";
+    wrap.style.paddingRight = "0";
+    wrap.innerHTML = flags.map(function (f) {
+      return '<div class="flag ' + f.severity + '"><span class="tag">' + esc(f.kind) +
+             '</span><span class="msg">' + esc(f.message) + "</span></div>";
+    }).join("");
+    body.appendChild(wrap);
+  }
+
+  function renderVerify(body, measured, args) {
+    if (!args) {
+      body.innerHTML = "<p style=\"margin:0\">Verify needs a place and a claimed time. " +
+        "Fill in the fields above.</p>";
+      return;
+    }
+    const result = Gnomon.modes.verify({
+      place: { latitude: args.latitude, longitude: args.longitude },
+      claim: args,
+      measured: measured,
+    });
+    state.verdict = result;
+
+    const label = { consistent: "consistent", inconsistent: "inconsistent", "cannot-tell": "cannot tell" };
+    body.innerHTML =
+      '<div class="verdict ' + result.verdict + '">' +
+      '<span class="tag">' + esc(label[result.verdict]) + "</span>" +
+      '<div class="sentence">' + esc(result.sentence) + "</div></div>";
+
+    Gnomon.debug.set("verify", "predicted elevation", result.predicted.elevation);
+    Gnomon.debug.set("verify", "predicted azimuth", result.predicted.azimuth);
+    Gnomon.debug.set("verify", "verdict", result.verdict);
+    renderDebug();
+  }
+
+  function renderTime(body, measured, args) {
+    if (!args) {
+      body.innerHTML = "<p style=\"margin:0\">Time mode needs a place and a date.</p>";
+      return;
+    }
+    const result = Gnomon.modes.timeWindows({
+      place: { latitude: args.latitude, longitude: args.longitude },
+      date: args,
+      measured: measured,
+    });
+    state.timeWindows = result;
+
+    body.innerHTML = '<canvas id="timeline" width="900" height="92"></canvas><div class="window-list"></div>';
+    drawTimeline(result, args);
+
+    const list = body.querySelector(".window-list");
+    if (result.impossible) {
+      list.innerHTML = '<span style="color:var(--bad)">No time of day fits. The sun never reaches ' +
+        "the measured elevation at this place on this date — that is an answer, not a failure to find one.</span>";
+    } else {
+      list.innerHTML = result.windows.map(function (w) {
+        return w.start + " – " + w.end + '  <span class="peak">best ' + w.peak + "</span>";
+      }).join("<br>") +
+      (result.ambiguous
+        ? '<br><span style="color:var(--ink-faint)">Two windows: the sun passes any given elevation ' +
+          "twice a day. A reference bearing resolves which side of noon.</span>"
+        : "");
+    }
+  }
+
+  function drawTimeline(result, args) {
+    const canvas = document.getElementById("timeline");
+    const w = canvas.width, h = canvas.height;
+    const ctx = canvas.getContext("2d");
+    const plotTop = 8, plotBottom = h - 20;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Hour rules, so a window can be read off the axis rather than guessed.
+    ctx.font = "10px ui-monospace, monospace";
+    for (let hour = 0; hour <= 24; hour += 3) {
+      const x = (hour / 24) * w;
+      ctx.strokeStyle = "rgba(90,99,109,.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, plotTop);
+      ctx.lineTo(x + 0.5, plotBottom);
+      ctx.stroke();
+      ctx.fillStyle = "#5b636d";
+      ctx.textAlign = hour === 0 ? "left" : hour === 24 ? "right" : "center";
+      ctx.fillText(String(hour).padStart(2, "0") + ":00", x, h - 6);
+    }
+
+    // The fit curve across the day.
+    ctx.beginPath();
+    result.samples.forEach(function (s, i) {
+      const x = (s.minutes / 1440) * w;
+      const y = plotBottom - s.fit * (plotBottom - plotTop);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = "#8b939d";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // The windows themselves, filled.
+    for (const win of result.windows) {
+      const x0 = (win.startMinutes / 1440) * w;
+      const x1 = (win.endMinutes / 1440) * w;
+      ctx.fillStyle = "rgba(224,164,76,.28)";
+      ctx.fillRect(x0, plotTop, Math.max(1.5, x1 - x0), plotBottom - plotTop);
+      const px = (win.peakMinutes / 1440) * w;
+      ctx.strokeStyle = "#e0a44c";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, plotTop);
+      ctx.lineTo(px, plotBottom);
+      ctx.stroke();
+    }
+
+    // The claimed time, for comparison against the windows.
+    if (args && Number.isFinite(args.minutes)) {
+      const cx = (args.minutes / 1440) * w;
+      ctx.strokeStyle = "#d6dae0";
+      ctx.setLineDash([3, 3]);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, plotTop);
+      ctx.lineTo(cx, plotBottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.strokeStyle = "#2a2f36";
+    ctx.strokeRect(0.5, plotTop + 0.5, w - 1, plotBottom - plotTop);
+  }
+
+  function renderLocate(body, measured) {
+    const band = state.band;
+    if (!band) {
+      body.innerHTML = "<p style=\"margin:0\">Solving…</p>";
+      return;
+    }
+    const claim = claimedPlace();
+    const strength = claim ? Gnomon.grid.strengthAt(band, claim.latitude, claim.longitude) : null;
+
+    body.innerHTML = "<p style=\"margin:0 0 .5rem\">" +
+      (band.unbounded
+        ? "The measured elevation is unbounded, so the band covers the whole daylit hemisphere. " +
+          "That is what \"we cannot tell\" looks like on a map — not an empty one."
+        : band.count.toLocaleString() + " of " + band.evaluated.toLocaleString() +
+          " grid cells fit the measured sun at this instant" +
+          (band.azimuthApplied ? ", with the bearing applied as a second filter." : ". " +
+          "A reference bearing would narrow it to a patch.")) +
+      "</p>" +
+      (strength === null ? "" :
+        "<p style=\"margin:0\">The place currently entered sits at strength <b>" +
+        strength.toFixed(2) + "</b> in that band" +
+        (strength > 0.5 ? " — well inside it." : strength > 0 ? " — at its edge." : " — outside it.") +
+        "</p>");
+  }
+
+  for (const m of ["verify", "time", "locate"]) {
+    document.getElementById("tab-" + m).addEventListener("click", function () { setResultMode(m); });
+  }
+  window.gnomonSetResultMode = setResultMode;
+  window.gnomonRenderResult = renderResult;
 
   Gnomon.debug.set("session", "core version", Gnomon.version);
   renderSolar();

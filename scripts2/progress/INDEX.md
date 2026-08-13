@@ -16,7 +16,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G10 | #11 | Inverse solve: the global elevation-and-azimuth grid | yes | **shipped** — [G10.md](G10.md) |
 | G11 | #16 | Map: orthographic globe, bundled coastlines, soft band | yes | **shipped** — [G11.md](G11.md) |
 | G12 | #17 | Time scrubber: the band sweeping across the globe | yes | pending |
-| G13 | #18 | Three modes: Verify, Time, Locate | yes | pending |
+| G13 | #18 | Three modes: Verify, Time, Locate | yes | **shipped** — [G13.md](G13.md) |
 | G14 | #19 | Guards: low sun, the equinoxes, and a broken residual | yes | pending |
 | G15 | #20 | Report export: one self-contained file that outlives the session | yes | pending |
 | G16 | #21 | Visual system: import the Claude Design source | **no** | pending — human gate (`/design-login`) |
