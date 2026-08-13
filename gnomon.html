@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gnomon</title>
+<!-- The only network activity in the app, and it happens at load, before any
+     image exists, identically for every user. It can reveal that somebody
+     opened Gnomon. It cannot reveal anything about their image, because at this
+     point there is none. Tile servers are categorically different and are
+     forbidden — see scripts2/check-network.js. -->
+<script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
 <style>
   /* An instrument, not a dashboard. A number on screen should read as a
      measurement, not as a conclusion — so: monospace numerals, hairline rules,
@@ -162,6 +168,24 @@
   .note { margin: .5rem 0 0; font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
   .note.warn { color: var(--accent); }
 
+  .canvas-stage.dragover { outline: 1px dashed var(--accent); outline-offset: -8px; }
+  #image-canvas { max-width: 100%; max-height: 100%; display: block; object-fit: contain; }
+  .stage-wrap { position: relative; display: none; max-width: 100%; max-height: 100%; }
+  .stage-wrap.live { display: block; }
+
+  /* Integrity flags. A crop is the one that quietly invalidates the camera
+     model, so "loud" has to actually look loud rather than being a caption. */
+  .flags { display: flex; flex-direction: column; gap: .4rem; padding: .3rem 1rem .2rem; }
+  .flag { display: flex; gap: .6rem; align-items: baseline; font-size: 12px; line-height: 1.5; }
+  .flag .tag {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+    padding: .1rem .35rem; border-radius: 2px; flex-shrink: 0; white-space: nowrap;
+  }
+  .flag.loud .tag { background: var(--accent); color: #1a1205; font-weight: 600; }
+  .flag.loud .msg { color: var(--ink); }
+  .flag.quiet .tag { border: 1px solid var(--rule); color: var(--ink-faint); }
+  .flag.quiet .msg { color: var(--ink-faint); }
+
   .tally { font-family: var(--mono); font-size: 11px; }
   .tally.pass { color: var(--good); }
   .tally.fail { color: var(--bad); }
@@ -179,8 +203,8 @@
 <main>
   <section id="region-canvas">
     <div class="region-label">Image</div>
-    <div class="canvas-stage">
-      <div class="empty-state">
+    <div class="canvas-stage" id="canvas-stage">
+      <div class="empty-state" id="empty-state">
         <strong>Drop a photograph here</strong>
         <small>Nothing is uploaded. The image stays in this tab and dies with it.</small>
         <div class="rule"></div>
@@ -189,6 +213,11 @@
           Two is enough; three or more lets the fit average out your clicking.
         </small>
       </div>
+      <div class="stage-wrap" id="stage-wrap"><canvas id="image-canvas"></canvas></div>
+      <!-- Drag-drop is the fast path, but it is unusable with a keyboard and
+           impossible to script. The input is the accessible route to the same
+           loader. -->
+      <input type="file" id="file-input" accept="image/*" hidden>
     </div>
   </section>
 
@@ -587,6 +616,286 @@ var Gnomon = (function () {
       atInfinity: atInfinity, dehomogenise: dehomogenise, magnitude: magnitude,
       normaliser: normaliser, jacobiEigen: jacobiEigen,
       vanishingPoint: vanishingPoint,
+    };
+  })();
+
+  /* ── meta ────────────────────────────────────────────────────────────────
+     What the file claims about itself, and whether to believe it.
+
+     Three conditions here each silently wreck the answer if missed, and none
+     announces itself: the image still opens, the EXIF still parses, and the
+     focal length is simply wrong by a factor nobody sees. Detecting them is
+     most of the value of reading metadata at all.
+     ──────────────────────────────────────────────────────────────────────── */
+  const meta = (function () {
+    /* Sensor widths in mm, for G7's Tier 2. Deliberately small — this is a
+       fallback for when FocalLengthIn35mmFilm is absent, and a wrong entry is
+       worse than a missing one because it produces a confident mid-tier answer.
+       Values are physical sensor formats, not marketing numbers. */
+    const SENSOR_WIDTHS = {
+      // Full frame
+      "sony|ilce-7": 35.9, "sony|ilce-7m3": 35.9, "sony|ilce-7m4": 35.9,
+      "canon|eos r": 36.0, "canon|eos r5": 36.0, "canon|eos r6": 36.0,
+      "canon|eos 5d mark iii": 36.0, "canon|eos 5d mark iv": 36.0,
+      "nikon|z 6": 35.9, "nikon|z 7": 35.9, "nikon|d750": 35.9, "nikon|d850": 35.9,
+      // APS-C
+      "fujifilm|x-t3": 23.5, "fujifilm|x-t4": 23.5, "fujifilm|x-t5": 23.5,
+      "fujifilm|x100v": 23.5, "fujifilm|x-pro3": 23.5,
+      "canon|eos 7d": 22.3, "canon|eos 80d": 22.3, "canon|eos m50": 22.3,
+      "nikon|d500": 23.5, "nikon|d7500": 23.5,
+      "sony|ilce-6000": 23.5, "sony|ilce-6400": 23.5,
+      // Micro four thirds
+      "olympus|e-m1": 17.3, "olympus|e-m5": 17.3, "panasonic|dmc-gh4": 17.3, "panasonic|dc-gh5": 17.3,
+      // Phones — main rear camera
+      "apple|iphone 11": 5.6, "apple|iphone 12": 7.0, "apple|iphone 12 pro": 7.0,
+      "apple|iphone 13": 7.0, "apple|iphone 13 pro": 9.8, "apple|iphone 14 pro": 9.8,
+      "apple|iphone 15 pro": 9.8, "apple|iphone 16 pro": 9.8,
+      "google|pixel 6": 9.4, "google|pixel 7": 9.4, "google|pixel 8": 9.4,
+      "samsung|sm-g998b": 9.0, "samsung|sm-s918b": 9.5,
+    };
+
+    // Last resort within Tier 2: a maker's most common format. Flagged as a
+    // guess by the caller, because a guess presented as a lookup is worse than
+    // no answer at all.
+    const MAKE_DEFAULTS = {
+      fujifilm: 23.5, olympus: 17.3, panasonic: 17.3,
+      apple: 7.0, google: 9.4, samsung: 9.0,
+    };
+
+    function normalise(s) {
+      return String(s === undefined || s === null ? "" : s).trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function sensorWidth(make, model) {
+      const mk = normalise(make), md = normalise(model);
+      if (!mk && !md) return null;
+      const exact = SENSOR_WIDTHS[mk + "|" + md];
+      if (exact !== undefined) return exact;
+      const fallback = MAKE_DEFAULTS[mk];
+      return fallback === undefined ? null : fallback;
+    }
+
+    /* EXIF stores Orientation as 1–8, but exifr revives it to prose
+       ("Rotate 90 CW"). Number() on that is NaN, which would fall back to "no
+       rotation" and leave every vertical in the image sideways — with nothing
+       downstream able to detect it. Both spellings are accepted. */
+    const ORIENTATION_WORDS = {
+      "horizontal (normal)": 1,
+      "mirror horizontal": 2,
+      "rotate 180": 3,
+      "mirror vertical": 4,
+      "mirror horizontal and rotate 270 cw": 5,
+      "rotate 90 cw": 6,
+      "mirror horizontal and rotate 90 cw": 7,
+      "rotate 270 cw": 8,
+    };
+
+    function normaliseOrientation(value) {
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 1 && n <= 8) return n;
+      const word = ORIENTATION_WORDS[normalise(value)];
+      return word === undefined ? 1 : word;
+    }
+
+    // Orientations 5–8 exchange width and height when the image is decoded.
+    function orientationSwapsAxes(orientation) {
+      return orientation >= 5 && orientation <= 8;
+    }
+
+    /* "2023:12:22 13:45:30" → plain fields.
+
+       exifr revives this to a Date, so both forms have to be handled. Reading a
+       Date's components is clock-free and the core still constructs none of its
+       own — but the regex path fails on a Date entirely, which silently loses
+       the capture time on every real photograph. */
+    function parseExifDateTime(value) {
+      if (value && typeof value.getFullYear === "function") {
+        return {
+          year: value.getFullYear(),
+          month: value.getMonth() + 1,
+          day: value.getDate(),
+          minutes: value.getHours() * 60 + value.getMinutes(),
+          seconds: value.getSeconds(),
+        };
+      }
+      const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(String(value || ""));
+      if (!m) return null;
+      return {
+        year: +m[1], month: +m[2], day: +m[3],
+        minutes: +m[4] * 60 + +m[5],
+        seconds: +m[6],
+      };
+    }
+
+    function parseOffset(text) {
+      const m = /^([+-])(\d{2}):(\d{2})$/.exec(String(text || "").trim());
+      if (!m) return null;
+      const sign = m[1] === "-" ? -1 : 1;
+      return sign * (+m[2] + +m[3] / 60);
+    }
+
+    // Days since an arbitrary epoch, for differencing two calendar dates
+    // without a Date object. Only the difference is ever used.
+    function dayNumber(y, m, d) {
+      const a = Math.floor((14 - m) / 12);
+      const yy = y + 4800 - a;
+      const mm = m + 12 * a - 3;
+      return d + Math.floor((153 * mm + 2) / 5) + 365 * yy
+           + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
+    }
+
+    /* GPS timestamps are UTC by definition, so the gap between them and
+       DateTimeOriginal is the offset. Rounded to the nearest quarter hour:
+       camera clocks drift by seconds, and every real offset is a quarter-hour
+       multiple. */
+    function offsetFromGps(capture, gpsDateStamp, gpsTimeStamp) {
+      if (!capture || !gpsDateStamp || !gpsTimeStamp) return null;
+      const d = /^(\d{4}):(\d{2}):(\d{2})/.exec(String(gpsDateStamp));
+      if (!d) return null;
+      const parts = Array.isArray(gpsTimeStamp) ? gpsTimeStamp.map(Number) : null;
+      if (!parts || parts.length < 2 || parts.some(function (n) { return Number.isNaN(n); })) return null;
+
+      const dayGap = dayNumber(capture.year, capture.month, capture.day) - dayNumber(+d[1], +d[2], +d[3]);
+      const localMinutes = capture.minutes + capture.seconds / 60;
+      const utcMinutes = parts[0] * 60 + parts[1] + (parts[2] || 0) / 60;
+      const gapMinutes = dayGap * 1440 + localMinutes - utcMinutes;
+
+      const quarters = Math.round(gapMinutes / 15);
+      const hours = (quarters * 15) / 60;
+      // Real offsets live in [−12, +14]. Anything outside means the two
+      // timestamps are not describing the same instant, so claim nothing.
+      return hours >= -12 && hours <= 14 ? hours : null;
+    }
+
+    function analyse(input) {
+      const exif = input.exif || {};
+      const flags = [];
+      const flag = function (kind, severity, message) {
+        flags.push({ kind: kind, severity: severity, message: message });
+      };
+
+      const capture = parseExifDateTime(exif.DateTimeOriginal);
+      // The EXIF tag is FocalLengthIn35mmFilm; exifr surfaces it as
+      // FocalLengthIn35mmFormat. Reading only one name means Tier 1 never fires
+      // and every photograph silently drops to a weaker calibration.
+      const focal35 = Number.isFinite(exif.FocalLengthIn35mmFilm) ? exif.FocalLengthIn35mmFilm
+        : Number.isFinite(exif.FocalLengthIn35mmFormat) ? exif.FocalLengthIn35mmFormat
+        : null;
+      const focal = Number.isFinite(exif.FocalLength) ? exif.FocalLength : null;
+      const zoom = Number.isFinite(exif.DigitalZoomRatio) ? exif.DigitalZoomRatio : null;
+
+      const orientation = normaliseOrientation(
+        input.orientation === undefined ? exif.Orientation : input.orientation,
+      );
+
+      /* EXIF dimensions describe the STORED bytes; the decoded dimensions are
+         after orientation has been applied. For orientations 5–8 those differ
+         by an axis swap on a photograph that has been neither cropped nor
+         resized — so comparing them raw reports both, and a spurious crop flag
+         permanently discredits the principal point. Swap before comparing. */
+      const rawWidth = Number.isFinite(exif.ExifImageWidth) ? exif.ExifImageWidth : null;
+      const rawHeight = Number.isFinite(exif.ExifImageHeight) ? exif.ExifImageHeight : null;
+      const swap = orientationSwapsAxes(orientation);
+      const exifWidth = swap ? rawHeight : rawWidth;
+      const exifHeight = swap ? rawWidth : rawHeight;
+
+      const hasAnything = capture || focal35 || focal || exifWidth || exif.Make;
+      if (!hasAnything) {
+        flag("no-metadata", "loud",
+          "No usable EXIF. The camera cannot be calibrated from metadata, so the answer will rest on geometry alone and its band will be correspondingly wide.");
+      }
+
+      // ── Digital zoom ──
+      let effectiveFocal35 = focal35;
+      if (zoom !== null && Math.abs(zoom - 1) > 1e-6) {
+        if (effectiveFocal35 !== null) effectiveFocal35 = effectiveFocal35 * zoom;
+        flag("digital-zoom", "loud",
+          "DigitalZoomRatio is " + zoom + ", so the effective focal length is " + zoom +
+          "× the recorded one. Using the recorded value would be wrong by that factor.");
+      }
+
+      // ── Resize and crop ──
+      // Both are detected by comparing the recorded dimensions to the decoded
+      // ones, and they are told apart by whether the aspect ratio survived.
+      let resized = null;
+      let cropped = false;
+      if (exifWidth && exifHeight && input.decodedWidth && input.decodedHeight) {
+        const widthChanged = Math.abs(exifWidth - input.decodedWidth) > 1;
+        const exifAspect = exifWidth / exifHeight;
+        const decodedAspect = input.decodedWidth / input.decodedHeight;
+        const aspectChanged = Math.abs(exifAspect - decodedAspect) / exifAspect > 0.005;
+
+        if (aspectChanged) {
+          cropped = true;
+          flag("cropped", "loud",
+            "The aspect ratio has changed since capture (" + exifAspect.toFixed(3) + " → " +
+            decodedAspect.toFixed(3) + "), so the image has been cropped. The principal point is " +
+            "no longer the centre of the frame and the camera model cannot assume it is.");
+        }
+        if (widthChanged) {
+          resized = { ratio: input.decodedWidth / exifWidth, from: exifWidth, to: input.decodedWidth };
+          flag("resized", aspectChanged ? "quiet" : "loud",
+            "Recorded width " + exifWidth + "px, decoded width " + input.decodedWidth +
+            "px. The focal length in pixels scales by " + resized.ratio.toFixed(4) + ".");
+        }
+      }
+
+      // ── Timezone ──
+      // In order: the offset field, then GPS differenced against local time,
+      // then nothing. Never a silent default to UTC — the offset is the single
+      // field that most affects the answer.
+      let tzOffsetHours = parseOffset(exif.OffsetTimeOriginal);
+      let tzSource = tzOffsetHours === null ? null : "OffsetTimeOriginal";
+      if (tzOffsetHours === null) {
+        const fromGps = offsetFromGps(capture, exif.GPSDateStamp, exif.GPSTimeStamp);
+        if (fromGps !== null) { tzOffsetHours = fromGps; tzSource = "GPS"; }
+      }
+      if (tzOffsetHours === null && capture) {
+        flag("no-timezone", "loud",
+          "No OffsetTimeOriginal and no GPS timestamp to difference against, so the UTC offset is unknown. " +
+          "It must be supplied — it is not safe to assume UTC.");
+      }
+
+      // Latitude 0 is Null Island, a real coordinate. Testing truthiness here
+      // would silently discard a genuine reading.
+      const gps = Number.isFinite(exif.latitude) && Number.isFinite(exif.longitude)
+        ? { latitude: exif.latitude, longitude: exif.longitude }
+        : null;
+
+      return {
+        make: exif.Make || null,
+        model: exif.Model || null,
+        capture: capture,
+        tzOffsetHours: tzOffsetHours,
+        tzSource: tzSource,
+        gps: gps,
+        focalLength: focal,
+        focalLength35: focal35,
+        effectiveFocal35: effectiveFocal35,
+        digitalZoomRatio: zoom,
+        orientation: orientation,
+        exifWidth: exifWidth,
+        exifHeight: exifHeight,
+        decodedWidth: input.decodedWidth || null,
+        decodedHeight: input.decodedHeight || null,
+        resized: resized,
+        cropped: cropped,
+        // A crop moves the principal point somewhere unknown. Without evidence
+        // of a crop it stays assumed-central, which is the honest default.
+        principalPointTrustworthy: !cropped,
+        sensorWidth: sensorWidth(exif.Make, exif.Model),
+        flags: flags,
+      };
+    }
+
+    return {
+      analyse: analyse,
+      sensorWidth: sensorWidth,
+      normaliseOrientation: normaliseOrientation,
+      orientationSwapsAxes: orientationSwapsAxes,
+      parseExifDateTime: parseExifDateTime,
+      parseOffset: parseOffset,
+      offsetFromGps: offsetFromGps,
     };
   })();
 
@@ -1077,10 +1386,11 @@ var Gnomon = (function () {
   });
 
   return {
-    version: "0.4.0",
+    version: "0.5.0",
     debug: debug,
     tests: tests,
     fmt: fmt,
+    meta: meta,
     solar: solar,
     geom: geom,
     synth: synth,
@@ -1250,6 +1560,194 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     input.addEventListener("input", renderSolar);
     input.addEventListener("change", renderSolar);
   }
+
+  /* ── image loading ─────────────────────────────────────────────────────────
+     Drag-drop, EXIF, and orientation. All the judgement lives in Gnomon.meta;
+     this reads the file, decodes it, and renders what the core concluded. */
+  const state = { image: null, meta: null };
+  window.gnomonState = state;
+
+  const stage = document.getElementById("canvas-stage");
+  const stageWrap = document.getElementById("stage-wrap");
+  const emptyState = document.getElementById("empty-state");
+  const imageCanvas = document.getElementById("image-canvas");
+
+  /* EXIF Orientation must be applied before ANYTHING else. Every later stage
+     assumes that a vertical object in the world is vertical in the image; a
+     rotated frame silently rotates every angle the app recovers, and nothing
+     downstream can detect it. */
+  function drawOriented(source, orientation) {
+    const swap = orientation >= 5 && orientation <= 8;
+    const w = source.width, h = source.height;
+    imageCanvas.width = swap ? h : w;
+    imageCanvas.height = swap ? w : h;
+
+    const ctx = imageCanvas.getContext("2d");
+    ctx.save();
+    switch (orientation) {
+      case 2: ctx.translate(w, 0); ctx.scale(-1, 1); break;
+      case 3: ctx.translate(w, h); ctx.rotate(Math.PI); break;
+      case 4: ctx.translate(0, h); ctx.scale(1, -1); break;
+      case 5: ctx.rotate(0.5 * Math.PI); ctx.scale(1, -1); break;
+      case 6: ctx.rotate(0.5 * Math.PI); ctx.translate(0, -h); break;
+      case 7: ctx.rotate(0.5 * Math.PI); ctx.translate(w, -h); ctx.scale(-1, 1); break;
+      case 8: ctx.rotate(-0.5 * Math.PI); ctx.translate(-w, 0); break;
+      default: break;
+    }
+    ctx.drawImage(source, 0, 0);
+    ctx.restore();
+    return { width: imageCanvas.width, height: imageCanvas.height };
+  }
+
+  function renderFlags(analysis) {
+    const region = document.querySelector("#region-result .result-body");
+    if (!analysis.flags.length) {
+      region.innerHTML = "<p style=\"margin:0\">Metadata is intact and internally consistent. " +
+        "Mark two or more objects to recover the sun.</p>";
+      return;
+    }
+    const rows = analysis.flags.map(function (f) {
+      return '<div class="flag ' + f.severity + '"><span class="tag">' + esc(f.kind) +
+             '</span><span class="msg">' + esc(f.message) + "</span></div>";
+    }).join("");
+    region.innerHTML = '<div class="flags">' + rows + "</div>";
+  }
+
+  function putRead(key, text) {
+    const el = document.querySelector('[data-read="' + key + '"]');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle("pending", text === "—");
+  }
+
+  // Pre-fill the solar inputs from whatever the file knew, so the user does not
+  // retype what the image already told us.
+  function prefillFrom(analysis) {
+    if (analysis.capture) {
+      const c = analysis.capture;
+      document.getElementById("in-date").value =
+        c.year + "-" + String(c.month).padStart(2, "0") + "-" + String(c.day).padStart(2, "0");
+      document.getElementById("in-time").value =
+        String(Math.floor(c.minutes / 60)).padStart(2, "0") + ":" + String(c.minutes % 60).padStart(2, "0");
+    }
+    if (analysis.gps) {
+      document.getElementById("in-lat").value = analysis.gps.latitude.toFixed(5);
+      document.getElementById("in-lon").value = analysis.gps.longitude.toFixed(5);
+    }
+    if (analysis.tzOffsetHours !== null) {
+      document.getElementById("in-tz").value = String(analysis.tzOffsetHours);
+    }
+    renderSolar();
+  }
+
+  async function loadFile(file) {
+    if (!file || !/^image\//.test(file.type)) return;
+
+    let exif = {};
+    let orientation = 1;
+    if (window.exifr) {
+      try {
+        exif = (await window.exifr.parse(file, true)) || {};
+        // exifr revives Orientation to prose ("Rotate 90 CW"), so Number() on
+        // it is NaN. Gnomon.meta accepts either spelling.
+        orientation = Gnomon.meta.normaliseOrientation(exif.Orientation);
+      } catch (err) {
+        // A file with unreadable EXIF is a first-class input, not an error —
+        // stripped and screenshotted images are the interesting cases.
+        exif = {};
+      }
+    }
+
+    const bitmap = await createImageBitmap(file);
+
+    /* Every current browser applies EXIF orientation when decoding a Blob, and
+       the spec's opt-out ("none") was dropped — passing it silently falls back
+       to "from-image". So the default assumption has to be that the decoder
+       already rotated; re-applying would rotate twice and leave every vertical
+       in the image lying on its side.
+
+       Where the orientation swaps axes this is checkable rather than assumed:
+       if the bitmap still matches the STORED dimensions, the decoder did not
+       apply it and we must. For the mirror and 180° cases the dimensions are
+       identical either way, so there is nothing to check. */
+    const swaps = Gnomon.meta.orientationSwapsAxes(orientation);
+    const storedW = Number(exif.ExifImageWidth), storedH = Number(exif.ExifImageHeight);
+    const decoderSkipped = swaps && storedW && storedH
+      && bitmap.width === storedW && bitmap.height === storedH;
+
+    const size = drawOriented(bitmap, decoderSkipped ? orientation : 1);
+    bitmap.close();
+
+    const analysis = Gnomon.meta.analyse({
+      exif: exif,
+      orientation: orientation,
+      decodedWidth: size.width,
+      decodedHeight: size.height,
+    });
+
+    state.image = {
+      width: size.width, height: size.height,
+      orientation: orientation,
+      orientationAppliedByDecoder: !decoderSkipped,
+    };
+    state.meta = analysis;
+
+    emptyState.style.display = "none";
+    stageWrap.classList.add("live");
+
+    putRead("dimensions", size.width + " × " + size.height);
+    putRead("captured", analysis.capture
+      ? analysis.capture.year + "-" + String(analysis.capture.month).padStart(2, "0") + "-" +
+        String(analysis.capture.day).padStart(2, "0") + " " +
+        String(Math.floor(analysis.capture.minutes / 60)).padStart(2, "0") + ":" +
+        String(analysis.capture.minutes % 60).padStart(2, "0") +
+        (analysis.tzSource ? " (" + analysis.tzSource + ")" : "")
+      : "no timestamp");
+
+    renderFlags(analysis);
+    prefillFrom(analysis);
+
+    Gnomon.debug.set("image", "decoded", size.width + "×" + size.height);
+    Gnomon.debug.set("image", "exif orientation", orientation);
+    Gnomon.debug.set("image", "orientation applied by", decoderSkipped ? "gnomon" : "decoder");
+    Gnomon.debug.set("image", "stored dimensions",
+      storedW && storedH ? storedW + "×" + storedH : "unrecorded");
+    Gnomon.debug.set("image", "camera", (analysis.make || "?") + " " + (analysis.model || "?"));
+    Gnomon.debug.set("image", "focal (35mm eq)", analysis.focalLength35 === null ? "absent" : analysis.focalLength35);
+    Gnomon.debug.set("image", "focal effective", analysis.effectiveFocal35 === null ? "absent" : analysis.effectiveFocal35);
+    Gnomon.debug.set("image", "focal (mm)", analysis.focalLength === null ? "absent" : analysis.focalLength);
+    Gnomon.debug.set("image", "sensor width (mm)", analysis.sensorWidth === null ? "unknown" : analysis.sensorWidth);
+    Gnomon.debug.set("image", "digital zoom", analysis.digitalZoomRatio === null ? "absent" : analysis.digitalZoomRatio);
+    Gnomon.debug.set("image", "resized", analysis.resized ? analysis.resized.ratio : "no");
+    Gnomon.debug.set("image", "cropped", analysis.cropped);
+    Gnomon.debug.set("image", "principal point trusted", analysis.principalPointTrustworthy);
+    Gnomon.debug.set("image", "timezone", analysis.tzOffsetHours === null ? "unknown" : analysis.tzOffsetHours + " (" + analysis.tzSource + ")");
+    renderDebug();
+
+    if (window.gnomonOnImageLoaded) window.gnomonOnImageLoaded();
+  }
+
+  stage.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    stage.classList.add("dragover");
+  });
+  stage.addEventListener("dragleave", function () { stage.classList.remove("dragover"); });
+  stage.addEventListener("drop", function (e) {
+    e.preventDefault();
+    stage.classList.remove("dragover");
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) loadFile(file);
+  });
+
+  const fileInput = document.getElementById("file-input");
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files && fileInput.files[0]) loadFile(fileInput.files[0]);
+  });
+  emptyState.addEventListener("click", function () { fileInput.click(); });
+  emptyState.style.cursor = "pointer";
+
+  // Exposed so a browser test can drive loading without a real drag gesture.
+  window.gnomonLoadFile = loadFile;
 
   // Exposed so later slices re-render the panel after they compute.
   window.gnomonRenderDebug = renderDebug;
