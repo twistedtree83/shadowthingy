@@ -2973,8 +2973,14 @@ var Gnomon = (function () {
 
     function evaluate(input) {
       const fired = [];
-      const add = function (id, severity, title, message) {
-        fired.push({ id: id, severity: severity, title: title, message: message });
+      /* scope: "all" (the default) withholds the whole answer; "elevation"
+         withholds only the elevation — shown as a bound — while the modes
+         continue on the bearing. A scoped refusal whose bearing is ALSO gone
+         is escalated back to "all" below, because there is then nothing left
+         to continue with. */
+      const add = function (id, severity, title, message, scope) {
+        fired.push({ id: id, severity: severity, title: title, message: message,
+          scope: scope || "all" });
       };
 
       const elevation = input.elevation;
@@ -2994,7 +3000,9 @@ var Gnomon = (function () {
           "it is the absence of one, and it must not be read as a wide answer. What usually " +
           "helps: mark objects farther apart in the frame, especially separated sideways from " +
           "the shadow direction; prefer taller objects with longer shadows; and add a third " +
-          "object so the families have something to agree on.");
+          "object so the families have something to agree on. And if no reference direction is " +
+          "marked, the bearing cannot be used by any mode however well it was measured — " +
+          "marking one may be all that is missing.");
       } else if (unbounded) {
         add("azimuth-only", "warn", "Elevation is unmeasurable from these marks — the bearing still stands",
           "The marks do not pin the sun's height: shadows running toward or away from the " +
@@ -3004,22 +3012,31 @@ var Gnomon = (function () {
           "sideways, would usually recover the elevation.");
       }
 
-      /* Two tiers, split on the MEDIAN. A median inside the low-sun regime
-         means the answer itself lives where refraction and the penumbra smear
-         dominate — refuse, though azimuth survives. A band whose low edge
-         merely dips below the line is a different situation: the Monte Carlo
-         already includes the penumbra physics, so the width IS the honesty,
-         and refusing a healthy median because its error bar has a soft low
-         side was firing on ordinary late-afternoon photographs. */
+      /* Three tiers, split on how much of the BAND sits in the regime — and
+         a refusal here is scoped to the elevation, never to the whole answer,
+         because the bearing does not depend on the vertical scale and every
+         mode runs on azimuth alone.
+
+         Only a whole band below the line supports the claim "the sun is
+         low". A low median under a wide band is a different fact — a weak
+         measurement — and calling it low sun would be the wrong diagnosis
+         delivered confidently. The width is the honesty in that case; the
+         weak-check guard already names it. */
       if (!unbounded && Number.isFinite(elevation.p5) && elevation.p5 < LOW_SUN) {
+        const wholeBandLow = Number.isFinite(elevation.p95) && elevation.p95 <= LOW_SUN;
         const medianLow = Number.isFinite(elevation.p50) && elevation.p50 < LOW_SUN;
-        if (medianLow) {
-          add("low-sun", "refuse", "The sun is too low for a confident answer",
-            "The measured elevation sits below " + LOW_SUN + "°. Down there refraction dominates, " +
-            "the sun's disc smears shadow tips into the ground, and a pixel of marking error " +
-            "becomes a large angular error. Any elevation from this regime should be treated as " +
-            "indicative only — the shadow bearing does not depend on the vertical scale and " +
-            "still stands.");
+        if (wholeBandLow) {
+          add("low-sun", "refuse", "The sun is too low to state an elevation",
+            "The whole measured band sits at or below " + LOW_SUN + "°. Down there refraction " +
+            "dominates, the sun's disc smears shadow tips into the ground, and a pixel of " +
+            "marking error becomes a large angular error — so the elevation is reported as a " +
+            "bound, not a value. The shadow bearing does not depend on the vertical scale; " +
+            "every mode continues on it.", "elevation");
+        } else if (medianLow) {
+          add("low-sun", "warn", "Much of the band sits in the low-sun regime",
+            "The band's median falls below " + LOW_SUN + "° but its top does not — the marks " +
+            "do not say the sun was low; they say they cannot pin its height well. Read the " +
+            "low half of the band as soft, and weigh the bearing more than the elevation.");
         } else {
           add("low-sun", "warn", "The band's low side reaches into the low-sun regime",
             "The low edge of the measured band falls below " + LOW_SUN + "°, where refraction and " +
@@ -3076,10 +3093,25 @@ var Gnomon = (function () {
           "worth knowing about for its own sake.");
       }
 
-      const refusing = fired.some(function (g) { return g.severity === "refuse"; });
+      // A refusal scoped to the elevation cannot stand on its own when the
+      // bearing is gone too — escalate it, so "continue on azimuth" is never
+      // promised without an azimuth to continue on.
+      if (azimuthUnbounded) {
+        for (const g of fired) {
+          if (g.severity === "refuse" && g.scope === "elevation") g.scope = "all";
+        }
+      }
+
+      const refusing = fired.some(function (g) {
+        return g.severity === "refuse" && g.scope === "all";
+      });
+      const elevationWithheld = fired.some(function (g) {
+        return g.severity === "refuse" && g.scope === "elevation";
+      });
       return {
         fired: fired,
         confident: !refusing,
+        elevationWithheld: elevationWithheld,
         assumptions: ASSUMPTIONS.slice(),
         thresholds: {
           lowSun: LOW_SUN,
@@ -4789,16 +4821,20 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   /* The inverse solve, run from the measured band. The UTC instant comes from
      the claimed local time minus its offset — the same instant everywhere,
      which is what makes a global sweep meaningful. */
-  function solveBand(uncertainty) {
+  function solveBand(uncertainty, opts) {
     // The scrubbed time wins when one is set, so the map answers "where could
     // it have been at THIS time" while the claim itself stays untouched.
     const args = effectiveClaim();
     if (!args || !uncertainty) { state.band = null; drawMap(); return null; }
 
     const utcMinutes = args.minutes - args.tzOffsetHours * 60;
+    // A withheld elevation must not leak into the map as a band — the guards
+    // decided it is a bound, not a measurement, so the grid sees "unbounded"
+    // and falls back to the daylit hemisphere plus whatever the bearing adds.
+    const elevationWithheld = state.guards && state.guards.elevationWithheld;
     const band = Gnomon.grid.solve({
       utc: { year: args.year, month: args.month, day: args.day, minutes: utcMinutes },
-      elevation: uncertainty.elevation,
+      elevation: elevationWithheld ? { unbounded: true } : uncertainty.elevation,
       azimuth: uncertainty.azimuth,
     });
     state.band = band;
@@ -4812,7 +4848,9 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         Gnomon.grid.strengthAt(band, claim.latitude, claim.longitude).toFixed(3));
     }
     drawMap();
-    renderResult();
+    // renderResult re-solves the band when the guards withhold the elevation,
+    // and it does so with skipRender — without it this pair would recurse.
+    if (!(opts && opts.skipRender)) renderResult();
     renderDebug();
     return band;
   }
@@ -4923,9 +4961,23 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     }
     markReadoutUnreliable(false);
 
-    if (currentMode() === "verify") renderVerify(body, measured, args);
-    else if (currentMode() === "time") renderTime(body, measured, args);
-    else renderLocate(body, measured);
+    /* An elevation-scoped refusal (the sun genuinely too low) withholds the
+       elevation — shown as a bound, per the design source's 1m frame — while
+       the modes continue on the bearing, which does not depend on the
+       vertical scale. The withheld band must not leak into any mode, so the
+       modes are fed an unbounded elevation and the map is re-solved to
+       match. */
+    let effective = measured;
+    if (verdict && verdict.elevationWithheld) {
+      effective = { elevation: { unbounded: true }, azimuth: measured.azimuth };
+      putRead("elevation", "≤ " + verdict.thresholds.lowSun + "° · withheld");
+      putRead("multiplier", "—");
+      solveBand(state.uncertainty, { skipRender: true });
+    }
+
+    if (currentMode() === "verify") renderVerify(body, effective, args);
+    else if (currentMode() === "time") renderTime(body, effective, args);
+    else renderLocate(body, effective);
     renderGuards(body, verdict);
     renderIntegrityFlags(body);
   }

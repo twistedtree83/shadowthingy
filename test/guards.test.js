@@ -33,13 +33,43 @@ test("a clean, high-sun, mid-season scene fires nothing", () => {
 
 // ── Low sun ──────────────────────────────────────────────────────────────────
 
-test("below 5° elevation the app refuses a confident answer", () => {
+test("a whole band below 5° withholds the elevation but lets the bearing continue", () => {
+  /* The design source's 1m frame: a genuinely low sun reports "elevation
+     ≤ 5° · no interval" while azimuth is unaffected — the bearing does not
+     depend on the vertical scale, and every mode runs on it. The refusal is
+     scoped to the elevation, not to the whole answer. */
   const r = evaluate({ elevation: { p5: 2, p50: 3.5, p95: 5 } });
   assert.ok(ids(r).includes("low-sun"));
-  assert.equal(r.confident, false, "a refusal must actually withhold confidence");
   const guard = r.fired.find((g) => g.id === "low-sun");
   assert.equal(guard.severity, "refuse");
+  assert.equal(guard.scope, "elevation");
   assert.match(guard.message, /refraction/i);
+  assert.equal(r.elevationWithheld, true, "the elevation must be withheld");
+  assert.equal(r.confident, true, "the bearing is still a finding");
+});
+
+test("a scoped refusal escalates when the bearing is gone too", () => {
+  // "Continue on azimuth" must never be promised without an azimuth.
+  const r = evaluate({
+    elevation: { p5: 2, p50: 3.5, p95: 5 },
+    azimuth: { p5: 0, p50: 180, p95: 360, unbounded: true },
+  });
+  const guard = r.fired.find((g) => g.id === "low-sun");
+  assert.equal(guard.scope, "all");
+  assert.equal(r.confident, false);
+});
+
+test("a low median under a wide band is called a weak measurement, not a low sun", () => {
+  /* A band spanning 1–12° does not say the sun was low; it says the marks
+     cannot pin its height. Refusing with "the sun is too low" would be the
+     wrong diagnosis delivered confidently — the one failure mode this app
+     cannot have. */
+  const r = evaluate({ elevation: { p5: 1, p50: 4, p95: 12 } });
+  const guard = r.fired.find((g) => g.id === "low-sun");
+  assert.equal(guard.severity, "warn");
+  assert.match(guard.message, /cannot pin|soft/i);
+  assert.equal(r.confident, true);
+  assert.equal(r.elevationWithheld, false);
 });
 
 test("the refusal triggers on the band, not just the median", () => {
@@ -66,12 +96,6 @@ test("a healthy median whose band merely dips below 5° warns instead of refusin
   assert.equal(r.confident, true, "a healthy median stays a finding");
 });
 
-test("a median inside the low-sun regime still refuses", () => {
-  const r = evaluate({ elevation: { p5: 1, p50: 4, p95: 12 } });
-  const guard = r.fired.find((g) => g.id === "low-sun");
-  assert.equal(guard.severity, "refuse");
-  assert.equal(r.confident, false);
-});
 
 // ── Equinox ──────────────────────────────────────────────────────────────────
 
