@@ -153,23 +153,24 @@
   }
   .scrubber button:disabled { opacity: .35; cursor: default; }
   .scrubber button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-  /* The scrubber thumb is a hairline in the accent — a cursor over the day,
-     not a widget. */
-  .scrubber input[type="range"] {
+  /* Range inputs are hairline instruments everywhere — 1px track, 2×18px
+     accent thumb: a cursor over a scale, not a widget. */
+  input[type="range"] {
     -webkit-appearance: none; appearance: none;
-    flex: 1; min-width: 0; height: 20px; background: transparent; margin: 0;
+    height: 20px; background: transparent; margin: 0;
   }
-  .scrubber input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: var(--rule2); }
-  .scrubber input[type="range"]::-webkit-slider-thumb {
+  input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: var(--rule2); }
+  input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none; width: 2px; height: 18px; background: var(--accent);
     border: 0; border-radius: 0; margin-top: -9px;
   }
-  .scrubber input[type="range"]::-moz-range-track { height: 1px; background: var(--rule2); }
-  .scrubber input[type="range"]::-moz-range-thumb {
+  input[type="range"]::-moz-range-track { height: 1px; background: var(--rule2); }
+  input[type="range"]::-moz-range-thumb {
     width: 2px; height: 18px; background: var(--accent); border: 0; border-radius: 0;
   }
-  .scrubber input[type="range"]:disabled::-webkit-slider-thumb { background: var(--faint); }
-  .scrubber input[type="range"]:disabled::-moz-range-thumb { background: var(--faint); }
+  input[type="range"]:disabled::-webkit-slider-thumb { background: var(--faint); }
+  input[type="range"]:disabled::-moz-range-thumb { background: var(--faint); }
+  .scrubber input[type="range"] { flex: 1; min-width: 0; }
   .scrub-time {
     font-family: var(--mono); font-size: 10.5px; color: var(--dim);
     width: 3.1rem; text-align: right; flex-shrink: 0;
@@ -301,6 +302,17 @@
   }
   .mark-toolbar .prompt b { color: var(--accent); font-weight: 600; }
 
+  .zoom-ctl { display: flex; align-items: center; gap: .5rem; }
+  .zoom-ctl .zlbl {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .zoom-ctl input[type="range"] { width: 110px; }
+  .zoom-ctl .zoom-read {
+    font-family: var(--mono); font-size: 10px; color: var(--dim);
+    width: 2.4rem; text-align: right;
+  }
+
   .canvas-stage.dragover { outline: 1px dashed var(--accent); outline-offset: -8px; }
   .canvas-stage.marking { cursor: crosshair; }
 
@@ -328,9 +340,19 @@
     font: inherit; font-size: 11px; padding: 0 .2rem;
   }
   .object-row button:hover { color: var(--bad); }
-  #image-canvas { max-width: 100%; max-height: 100%; display: block; object-fit: contain; }
-  .stage-wrap { position: relative; display: none; max-width: 100%; max-height: 100%; }
-  .stage-wrap.live { display: block; }
+  /* The photo always fits the stage on load. Percentage max-height only
+     constrains against a definite height, so the wrap must own the stage's box
+     rather than shrink-wrap the canvas — shrink-wrapping let any photo taller
+     than the stage render at native size and be cropped by overflow. The
+     margin:auto centring (not justify-content) keeps the top-left corner
+     reachable when zoomed in. Display scaling only — marks live in native
+     image pixels throughout. */
+  #image-canvas { max-width: 100%; max-height: 100%; display: block; margin: auto; }
+  .stage-wrap {
+    position: relative; display: none; width: 100%; height: 100%;
+    overflow: auto;
+  }
+  .stage-wrap.live { display: flex; }
 
   /* Integrity flags. A crop is the one that quietly invalidates the camera
      model, so "loud" has to actually look loud rather than being a caption —
@@ -371,6 +393,11 @@
       <button id="undo-mark">Undo</button>
       <button id="clear-marks">Clear</button>
       <button id="export-report">Export report</button>
+      <span class="zoom-ctl">
+        <span class="zlbl">Zoom</span>
+        <input type="range" id="zoom" min="1" max="100" value="100" disabled>
+        <span class="zoom-read" id="zoom-read">fit</span>
+      </span>
       <span class="prompt" id="mark-prompt">Load an image to begin</span>
     </div>
     <div class="canvas-stage" id="canvas-stage">
@@ -3439,6 +3466,11 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     stageWrap.classList.add("live");
     stage.classList.add("marking");
 
+    // Every image starts at fit — the whole photograph visible, however large
+    // the file. The zoom slider then runs from fit to 1:1 native.
+    state.zoom = null;
+    resetZoomBounds();
+
     // A new image invalidates every mark — they were placed in the old frame's
     // coordinates and would be silently wrong in this one.
     state.objects = [];
@@ -3495,6 +3527,67 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
     if (file) loadFile(file);
   });
+
+  /* ── zoom ─────────────────────────────────────────────────────────────────
+     The photo fits the stage by default; the slider zooms the DISPLAY from
+     fit up to 1:1 native and never past it, so pixels are never interpolated
+     upward. Marks are stored in native image coordinates and clicks are
+     mapped through the displayed rect, so zoom changes what is seen, never
+     what is measured. */
+  const zoomSlider = document.getElementById("zoom");
+  const zoomRead = document.getElementById("zoom-read");
+
+  function fitFraction() {
+    if (!imageCanvas.width || !imageCanvas.height) return 1;
+    return Math.min(1,
+      stageWrap.clientWidth / imageCanvas.width,
+      stageWrap.clientHeight / imageCanvas.height);
+  }
+
+  function applyZoom(fraction) {
+    state.zoom = fraction;
+    if (fraction === null) {
+      imageCanvas.style.width = "";
+      imageCanvas.style.maxWidth = "";
+      imageCanvas.style.maxHeight = "";
+      zoomSlider.value = zoomSlider.min;
+      zoomRead.textContent = "fit";
+    } else {
+      imageCanvas.style.maxWidth = "none";
+      imageCanvas.style.maxHeight = "none";
+      imageCanvas.style.width = Math.round(imageCanvas.width * fraction) + "px";
+      zoomRead.textContent = Math.round(fraction * 100) + "%";
+    }
+  }
+
+  // Zoom about the centre of the viewport, so turning the slider magnifies
+  // what the user is looking at rather than the top-left corner.
+  function setZoom(fraction) {
+    const before = imageCanvas.getBoundingClientRect();
+    const port = stageWrap.getBoundingClientRect();
+    const cx = (port.left + port.width / 2 - before.left) / before.width;
+    const cy = (port.top + port.height / 2 - before.top) / before.height;
+    applyZoom(fraction);
+    const after = imageCanvas.getBoundingClientRect();
+    stageWrap.scrollLeft += (after.left + cx * after.width) - (port.left + port.width / 2);
+    stageWrap.scrollTop += (after.top + cy * after.height) - (port.top + port.height / 2);
+  }
+
+  function resetZoomBounds() {
+    const fit = Math.max(1, Math.floor(fitFraction() * 100));
+    zoomSlider.min = String(fit);
+    zoomSlider.disabled = !state.image || fit >= 100;
+    if (state.zoom === null) applyZoom(null);
+  }
+
+  zoomSlider.addEventListener("input", function () {
+    const v = Number(zoomSlider.value);
+    if (v <= Number(zoomSlider.min)) setZoom(null);
+    else setZoom(v / 100);
+  });
+
+  // A window resize changes what "fit" means.
+  window.addEventListener("resize", resetZoomBounds);
 
   /* ── marking ───────────────────────────────────────────────────────────────
      An object is three clicks — base, top, shadow tip — and yields three
