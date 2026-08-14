@@ -53,6 +53,26 @@ test("a comfortably high sun does not fire it", () => {
   assert.equal(ids(evaluate({ elevation: { p5: 20, p50: 25, p95: 30 } })).includes("low-sun"), false);
 });
 
+test("a healthy median whose band merely dips below 5° warns instead of refusing", () => {
+  /* The old form refused whenever p5 < 5° — which fired on every ordinary
+     late-afternoon photograph carrying a wide-but-honest band (a weak focal
+     prior alone was enough). The Monte Carlo now includes the penumbra
+     physics, so the width itself is the honesty; the guard's job is to say
+     the low side is soft, not to throw the answer away. */
+  const r = evaluate({ elevation: { p5: 3, p50: 9, p95: 18 } });
+  const guard = r.fired.find((g) => g.id === "low-sun");
+  assert.ok(guard, "the dip must still be surfaced");
+  assert.equal(guard.severity, "warn");
+  assert.equal(r.confident, true, "a healthy median stays a finding");
+});
+
+test("a median inside the low-sun regime still refuses", () => {
+  const r = evaluate({ elevation: { p5: 1, p50: 4, p95: 12 } });
+  const guard = r.fired.find((g) => g.id === "low-sun");
+  assert.equal(guard.severity, "refuse");
+  assert.equal(r.confident, false);
+});
+
 // ── Equinox ──────────────────────────────────────────────────────────────────
 
 test("near the equinoxes the latitude constraint is flagged as weakest", () => {
@@ -137,10 +157,28 @@ test("a crop is surfaced as a guard, since every tier rests on the principal poi
   assert.ok(ids(r).includes("cropped"));
 });
 
-test("an unbounded measurement withholds confidence outright", () => {
-  const r = evaluate({ elevation: { p5: 0, p50: 45, p95: 90, unbounded: true } });
+test("a fully unbounded measurement withholds confidence outright", () => {
+  const r = evaluate({
+    elevation: { p5: 0, p50: 45, p95: 90, unbounded: true },
+    azimuth: { p5: 0, p50: 180, p95: 360, unbounded: true },
+  });
   assert.equal(r.confident, false);
   assert.ok(ids(r).includes("unbounded"));
+});
+
+test("unbounded elevation with a bounded bearing degrades to azimuth-only, not a refusal", () => {
+  /* The design source's 1l frame: "Shadow bearing does not depend on the
+     vertical scale … Verify and Time can run on azimuth alone." A shadow cast
+     toward the camera, or two small distant objects, kills the vertical scale
+     while the bearing survives — and every mode already runs on azimuth alone,
+     so refusing outright threw away a working measurement. */
+  const r = evaluate({ elevation: { p5: 0, p50: 45, p95: 90, unbounded: true } });
+  assert.equal(r.confident, true, "a bounded bearing is still a measurement");
+  assert.ok(ids(r).includes("azimuth-only"));
+  const guard = r.fired.find((g) => g.id === "azimuth-only");
+  assert.equal(guard.severity, "warn");
+  assert.match(guard.message, /azimuth|bearing/i);
+  assert.match(guard.message, /third object|crosses the frame/i, "must tell the user how to recover elevation");
 });
 
 test("every fired guard carries a severity and a message a person can act on", () => {

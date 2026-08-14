@@ -716,6 +716,10 @@ var Gnomon = (function () {
 
       return {
         apply: function (p) { return [(p[0] - cx) * s, (p[1] - cy) * s, 1]; },
+        // The same T for an already-homogeneous point, including one at
+        // infinity — the translation term scales with w, so w = 0 directions
+        // are only rescaled, which is what a translation should do to them.
+        applyH: function (v) { return [(v[0] - cx * v[2]) * s, (v[1] - cy * v[2]) * s, v[2]]; },
         // A point maps as p' = T p, so it comes back as p = T⁻¹ p'.
         unapply: function (v) { return [v[0] / s + cx * v[2], v[1] / s + cy * v[2], v[2]]; },
       };
@@ -838,6 +842,77 @@ var Gnomon = (function () {
       };
     }
 
+    /* The least-squares vanishing point of a family CONSTRAINED to the line
+       through two known vanishing points.
+
+       A direction that is a linear combination of two others has its vanishing
+       point on the line joining theirs — so a family that cannot fix a point
+       on its own, because its lines nearly coincide, still fixes one point ON
+       THAT LINE perfectly well. This minimises the same Σ(l·v)² objective as
+       vanishingPoint, over v = α·a + β·b: a closed-form 2×2 eigenproblem.
+
+       The aggregation happens in line space, where marking noise is small and
+       symmetric. Intersecting each line with the constraint individually and
+       averaging afterwards was tried first and rejected: a noisy line's
+       intersection slides far along the constraint line, so the average
+       inherits a heavy tail that the joint fit does not have. */
+    function vanishingPointOnLine(segments, anchorA, anchorB) {
+      if (!segments || segments.length < 1) return null;
+
+      const points = [];
+      for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        if (s.a[0] === s.b[0] && s.a[1] === s.b[1]) return null;
+        points.push(s.a, s.b);
+      }
+
+      const N = normaliser(points);
+      const a = unit(N.applyH(anchorA));
+      const b = unit(N.applyH(anchorB));
+      // Anchors that coincide define no line to search along.
+      if (norm(cross(a, b)) < 1e-9) return null;
+
+      let A = 0, B = 0, C = 0;
+      for (let i = 0; i < segments.length; i++) {
+        const l = unit(cross(N.apply(segments[i].a), N.apply(segments[i].b)));
+        const la = dot(l, a), lb = dot(l, b);
+        A += la * la; B += la * lb; C += lb * lb;
+      }
+
+      const half = (A - C) / 2;
+      const root = Math.sqrt(half * half + B * B);
+      const small = (A + C) / 2 - root;
+      const big = (A + C) / 2 + root;
+
+      let alpha, beta;
+      if (Math.abs(B) > 1e-15) { alpha = B; beta = small - A; }
+      else if (A <= C) { alpha = 1; beta = 0; }
+      else { alpha = 0; beta = 1; }
+      const n = Math.hypot(alpha, beta);
+      if (n === 0) return null;
+      alpha /= n; beta /= n;
+
+      const v = unit(N.unapply([
+        a[0] * alpha + b[0] * beta,
+        a[1] * alpha + b[1] * beta,
+        a[2] * alpha + b[2] * beta,
+      ]));
+      const infinite = atInfinity(v);
+
+      // Same convention as vanishingPoint: rises with degeneracy. Here the
+      // small eigenvalue is the fit residual and the large one is how firmly
+      // the family pins a position along the anchor line.
+      const conditionNumber = big <= 1e-14 ? 1 : Math.max(0, small) / big;
+
+      return {
+        v: v,
+        point: infinite ? null : { x: v[0] / v[2], y: v[1] / v[2] },
+        atInfinity: infinite,
+        conditionNumber: conditionNumber,
+        lineCount: segments.length,
+      };
+    }
+
     /* Unit direction in which to draw a dashed extension from `from`, given
        that the segment ran `other` → `from` and its family converges at `vp`.
 
@@ -875,6 +950,7 @@ var Gnomon = (function () {
       atInfinity: atInfinity, dehomogenise: dehomogenise, magnitude: magnitude,
       normaliser: normaliser, jacobiEigen: jacobiEigen,
       vanishingPoint: vanishingPoint,
+      vanishingPointOnLine: vanishingPointOnLine,
       extensionDirection: extensionDirection,
     };
   })();
@@ -1898,8 +1974,84 @@ var Gnomon = (function () {
         objects.map(function (o) { return { from: o.base, to: o.top }; }));
       const dShadow = orient(directionFrom(vp.shadow.v, focal, c), focal, c,
         objects.map(function (o) { return { from: o.base, to: o.tip }; }));
-      const dRay = orient(directionFrom(vp.sun.v, focal, c), focal, c,
+
+      // The free estimate of the ray direction, straight from the ray family's
+      // own vanishing point. Kept because its disagreement with the plane of
+      // the other two families is an independent validity check — but as an
+      // ESTIMATOR it needs the ray lines to fix a point on their own, which
+      // they cannot do when they nearly coincide: a shadow cast toward or away
+      // from the camera, or two small, distant objects.
+      const dRayFree = orient(directionFrom(vp.sun.v, focal, c), focal, c,
         objects.map(function (o) { return { from: o.top, to: o.tip }; }));
+      const freeUsable = vp.sun.wellConditioned !== false;
+
+      /* The constrained estimate. Vertical, shadow and ray are three edges of
+         one triangle, so their directions are coplanar — which in the image
+         means their vanishing points are collinear: v_sun MUST lie on the
+         vanishing line ℓ = v_z × v_shadow. Each object's ray line crosses ℓ
+         at exactly one point, so intersecting ray lines with ℓ turns the
+         degenerate free problem into one well-posed intersection per object.
+         The disagreement of those intersections along ℓ is a validity check
+         that keeps working exactly where the free estimate stops.
+
+         The constraint is only information when ℓ itself is trustworthy, so
+         this path is gated on the vertical and shadow families being well
+         conditioned — a vanishing line built from broken families would
+         launder garbage into a confident-looking answer. */
+      const groundConditioned = vp.z.wellConditioned !== false
+        && vp.shadow.wellConditioned !== false;
+
+      let dRayConstrained = null;
+      let spreadResidual = null;
+      if (groundConditioned) {
+        const raySegments = objects
+          .filter(function (o) { return o.top[0] !== o.tip[0] || o.top[1] !== o.tip[1]; })
+          .map(function (o) { return { a: o.top, b: o.tip }; });
+        const fit = raySegments.length
+          ? geom.vanishingPointOnLine(raySegments, vp.z.v, vp.shadow.v)
+          : null;
+        if (fit) {
+          dRayConstrained = orient(directionFrom(fit.v, focal, c), focal, c,
+            objects.map(function (o) { return { from: o.top, to: o.tip }; }));
+
+          /* The validity spread: each object's ray, intersected with ℓ on its
+             own, gives that object's private opinion of the sun direction.
+             Their disagreement with the joint fit is the in-plane counterpart
+             of the coplanarity check — noisy per object, which is exactly why
+             it is only a CHECK, judged against its own Monte Carlo noise
+             floor, while the answer comes from the joint fit above. */
+          const ell = unit3(cross3(vp.z.v, vp.shadow.v));
+          spreadResidual = 0;
+          for (const o of objects) {
+            if (o.top[0] === o.tip[0] && o.top[1] === o.tip[1]) continue;
+            const rayLine = unit3(geom.lineThrough(
+              geom.point(o.top[0], o.top[1]), geom.point(o.tip[0], o.tip[1])));
+            const sHom = cross3(rayLine, ell);
+            if (Math.hypot(sHom[0], sHom[1], sHom[2]) < 1e-9) continue;
+            const d = orient(directionFrom(sHom, focal, c), focal, c,
+              [{ from: o.top, to: o.tip }]);
+            spreadResidual = Math.max(spreadResidual, angleBetween(d, dRayConstrained));
+          }
+        }
+      }
+
+      /* Estimator choice. The free estimate is the answer whenever the ray
+         family fixes a point on its own: it depends only on v_z and v_sun, so
+         the shadow family's noise never touches the elevation. The constraint
+         is the RESCUE — when the rays nearly coincide it recovers a bounded
+         answer from geometry the free estimate cannot use, at the honest cost
+         of inheriting v_shadow's noise into the band.
+
+         A caller may pin the choice (input.estimator) so that a Monte Carlo
+         uses one estimator for every draw — letting each draw choose for
+         itself near the conditioning boundary would mix two different
+         statistics into one band. */
+      let estimator = input.estimator;
+      if (estimator !== "free" && estimator !== "constrained") {
+        estimator = freeUsable ? "free" : "constrained";
+      }
+      const constrained = estimator === "constrained" && dRayConstrained !== null;
+      const dRay = constrained ? dRayConstrained : dRayFree;
 
       // The ray runs AWAY from the sun — top down to shadow tip — so the
       // direction of the sun itself is its negation. Elevation is then
@@ -1916,9 +2068,18 @@ var Gnomon = (function () {
          OF THE CALIBRATION: Tier 4 was derived from v_z and v_shadow, while
          this brings in v_sun, which played no part in it. A scene can satisfy
          the calibration and still fail here, and that is the case worth
-         catching. */
-      const determinant = dot3(cross3(dUp, dShadow), dRay);
-      const residual = Math.asin(Math.min(1, Math.abs(determinant))) * R2D;
+         catching.
+
+         It has two complementary components. The free ray's distance from the
+         vertical–shadow plane (the determinant) catches off-plane breakage;
+         the spread of the per-object constrained rays along ℓ catches in-plane
+         disagreement. A degenerate free estimate is excluded — its determinant
+         is noise, not evidence, and it was firing this check on valid scenes. */
+      const determinant = dot3(cross3(dUp, dShadow), dRayFree);
+      const coplanarity = Math.asin(Math.min(1, Math.abs(determinant))) * R2D;
+      const residual = constrained
+        ? (spreadResidual !== null ? spreadResidual : coplanarity)
+        : coplanarity;
 
       // Azimuth lives in the ground plane, so both directions have their d_up
       // component removed before the angle is taken.
@@ -1937,23 +2098,29 @@ var Gnomon = (function () {
         }
       }
 
-      /* When v_sun is poorly conditioned the elevation is the casualty — it is
-         the only quantity that depends on the ray direction. Azimuth comes from
-         the shadow lying on the ground and survives, so it is offered as a mode
-         rather than reported as a failure. */
-      const elevationUsable = vp.sun.wellConditioned !== false;
+      /* Elevation is the casualty only when BOTH estimators fail: the free one
+         needs the ray family to fix a point on its own, and the constrained
+         one needs a trustworthy vanishing line. Azimuth comes from the shadow
+         lying on the ground and survives either way, so it is offered as a
+         mode rather than reported as a failure. */
+      const elevationUsable = constrained ? true : freeUsable;
 
       return {
         dUp: dUp,
         dShadow: dShadow,
         dRay: dRay,
+        dRayFree: dRayFree,
         dSun: dSun,
         elevation: elevation,
         elevationUsable: elevationUsable,
+        constrained: constrained,
+        estimator: constrained ? "constrained" : "free",
         azimuth: azimuth,
         azimuthRelative: azimuthRelative,
         azimuthOnly: !elevationUsable,
         residual: residual,
+        spreadResidual: spreadResidual,
+        coplanarityResidual: coplanarity,
         determinant: determinant,
         shadowMultiplier: elevation > 0 ? 1 / Math.tan(elevation / R2D) : Infinity,
         conditioning: {
@@ -2047,19 +2214,51 @@ var Gnomon = (function () {
       return { p5: wrap(s.p5), p50: wrap(s.p50), p95: wrap(s.p95), spread: s.p95 - s.p5 };
     }
 
+    /* The sun is not a point. Its disc subtends about 0.53°, so every shadow
+       tip is smeared along the shadow direction by a penumbra of roughly
+       L·α/(sin h · cos h) pixels for a shadow of length L at elevation h. At
+       midday that is a pixel or two; near the horizon it dominates marking
+       noise entirely — it is the physical reason low-sun answers are soft,
+       and modelling it lets the band say so instead of a threshold refusing. */
+    const SUN_ANGULAR_RADIUS = 0.00465; // radians — half of the 0.53° disc
+
+    function penumbraSigmas(objects, base) {
+      if (!base || !base.result || !Number.isFinite(base.result.elevation)) return null;
+      const h = (base.result.elevation * Math.PI) / 180;
+      if (h <= 0 || h >= Math.PI / 2) return null;
+      const foreshortening = Math.sin(h) * Math.cos(h);
+      if (foreshortening <= 0) return null;
+      return objects.map(function (o) {
+        const dx = o.tip[0] - o.base[0], dy = o.tip[1] - o.base[1];
+        const length = Math.hypot(dx, dy);
+        if (length === 0) return null;
+        // Capped: below ~1° the formula diverges, and a smear longer than a
+        // quarter of the shadow means the tip was never markable anyway.
+        const sigma = Math.min(0.25 * length,
+          (0.5 * length * SUN_ANGULAR_RADIUS) / foreshortening);
+        return { ux: dx / length, uy: dy / length, sigma: sigma };
+      });
+    }
+
     function begin(input) {
+      const base = baseSolve(input);
       return {
         input: input,
         samples: input.samples || 500,
         completed: 0,
         done: false,
-        elevations: [],
-        azimuths: [],
-        residuals: [],
+        /* Both estimators are measured on every draw — the same noise, so
+           their bands are directly comparable. Two lines always meet at
+           exactly one point, so with two marked objects the ray family's
+           condition number is identically zero and cannot say whether the
+           free estimate is trustworthy; the widths of these two bands can. */
+        free: { elevations: [], azimuths: [], residuals: [] },
+        constrained: { elevations: [], azimuths: [], residuals: [] },
         failures: 0,
         // The unperturbed solve, so the conditioning of the real marks is known
         // independently of how the noisy draws happen to land.
-        base: baseSolve(input),
+        base: base,
+        penumbra: penumbraSigmas(input.objects, base),
       };
     }
 
@@ -2100,8 +2299,34 @@ var Gnomon = (function () {
       const jitter = function (p) {
         return [p[0] + gaussian(random, sigma), p[1] + gaussian(random, sigma)];
       };
-      const objects = input.objects.map(function (o) {
-        return { base: jitter(o.base), top: jitter(o.top), tip: jitter(o.tip) };
+      const objects = input.objects.map(function (o, i) {
+        // Drawn in base, top, tip order — the order is part of the seeded
+        // stream's contract, and reordering it silently reshuffles which
+        // draw lands on which point.
+        const base = jitter(o.base);
+        const top = jitter(o.top);
+
+        /* The tip's noise is anisotropic: penumbra smear stretches it ALONG
+           the shadow, so the along-shadow sigma is inflated to
+           √(click² + penumbra²) while the cross-shadow sigma stays pure
+           click noise. Implemented as a rotation of the same two stream
+           draws an isotropic jitter would consume, so adding the physical
+           model changes no one else's draw — runs that differ only in sweep
+           keep identical noise realisations, which is what makes their band
+           widths comparable. */
+        let tip;
+        const pen = job.penumbra && job.penumbra[i];
+        if (pen && pen.sigma > 0) {
+          const along = gaussian(random, Math.sqrt(sigma * sigma + pen.sigma * pen.sigma));
+          const across = gaussian(random, sigma);
+          tip = [
+            o.tip[0] + along * pen.ux - across * pen.uy,
+            o.tip[1] + along * pen.uy + across * pen.ux,
+          ];
+        } else {
+          tip = jitter(o.tip);
+        }
+        return { base: base, top: top, tip: tip };
       });
 
       // f is sampled across the sweep the winning tier earned.
@@ -2144,13 +2369,17 @@ var Gnomon = (function () {
           shadow: geom.vanishingPoint(f.shadow),
           sun: geom.vanishingPoint(f.ray),
         };
-        const r = sun.solve({
-          vanishing: vps, focalPx: focal,
-          principalPoint: principal, objects: objects, reference: reference,
-        });
-        if (Number.isFinite(r.elevation)) job.elevations.push(r.elevation);
-        if (Number.isFinite(r.azimuth)) job.azimuths.push(r.azimuth);
-        if (Number.isFinite(r.residual)) job.residuals.push(r.residual);
+        for (const estimator of ["free", "constrained"]) {
+          const r = sun.solve({
+            vanishing: vps, focalPx: focal,
+            principalPoint: principal, objects: objects, reference: reference,
+            estimator: estimator,
+          });
+          const bucket = job[estimator];
+          if (Number.isFinite(r.elevation)) bucket.elevations.push(r.elevation);
+          if (Number.isFinite(r.azimuth)) bucket.azimuths.push(r.azimuth);
+          if (Number.isFinite(r.residual)) bucket.residuals.push(r.residual);
+        }
       } catch (err) {
         // A draw that lands on a degenerate configuration is counted, not
         // hidden — a high failure rate is itself information about the marks.
@@ -2171,28 +2400,62 @@ var Gnomon = (function () {
     function finish(job) {
       const input = job.input;
       const base = job.base;
+      const elevationRequested = !input.azimuthOnly;
+
+      const eFree = summarise(job.free.elevations);
+      const eCon = summarise(job.constrained.elevations);
+      const spreadOf = function (s) {
+        return s.p95 === null || s.p5 === null ? Infinity : s.p95 - s.p5;
+      };
+
+      /* Estimator selection, by measured width on identical draws. The free
+         estimate needs the ray family to fix a point on its own; the
+         constrained one intersects the rays with the vanishing line through
+         v_z and v_shadow, which stays well-posed when the rays nearly
+         coincide — a shadow cast toward or away from the camera, or two
+         small distant objects — at the cost of inheriting the shadow
+         family's noise. Neither dominates in every scene, and with two
+         objects the condition number cannot arbitrate (two lines always
+         meet exactly). Their measured bands can: both are honest Monte
+         Carlo widths for the same quantity under the same noise, and the
+         narrower one is simply the better instrument for these marks. The
+         status quo wins ties — constrained must be meaningfully tighter. */
+      let estimator = input.estimator;
+      if (estimator !== "free" && estimator !== "constrained") {
+        estimator = spreadOf(eCon) < spreadOf(eFree) * 0.8 ? "constrained" : "free";
+      }
+      const bucket = job[estimator];
+
+      /* The base result re-solved under the chosen estimator, so the point
+         value on screen and the band around it come from the same
+         instrument. */
+      const baseResult = base
+        ? sun.solve({
+            vanishing: base.vanishing, focalPx: input.focalPx,
+            principalPoint: input.principalPoint, objects: input.objects,
+            reference: input.reference, estimator: estimator,
+          })
+        : null;
 
       /* Poor conditioning propagates as UNBOUNDED, never as a large finite
          range. Two independent routes to that verdict: the real marks failing
-         to fix a direction, or the sampled spread being so wide the number has
-         stopped being a measurement. */
-      const sunUnconditioned = !base || base.vanishing.sun.wellConditioned === false;
+         to fix a direction under the chosen estimator, or the sampled spread
+         being so wide the number has stopped being a measurement. */
+      const sunUnconditioned = !baseResult || baseResult.elevationUsable === false;
       const groundUnconditioned = !base
         || base.vanishing.shadow.wellConditioned === false
         || base.vanishing.z.wellConditioned === false;
 
-      const elevationRequested = !input.azimuthOnly;
       let elevation = null;
       if (elevationRequested) {
-        const e = summarise(job.elevations);
-        const spread = e.p95 === null ? Infinity : e.p95 - e.p5;
+        const e = estimator === "constrained" ? eCon : eFree;
         elevation = {
           p5: e.p5, p50: e.p50, p95: e.p95,
-          unbounded: sunUnconditioned || spread > ELEVATION_UNBOUNDED_SPREAD,
+          unbounded: sunUnconditioned || spreadOf(e) > ELEVATION_UNBOUNDED_SPREAD,
         };
       }
 
-      const a = summariseAngles(job.azimuths);
+      const a = summariseAngles(bucket.azimuths);
       const azimuthSpread = a.spread === undefined ? Infinity : a.spread;
       const azimuth = {
         p5: a.p5, p50: a.p50, p95: a.p95,
@@ -2204,8 +2467,15 @@ var Gnomon = (function () {
         failures: job.failures,
         elevation: elevation,
         azimuth: azimuth,
-        residual: summarise(job.residuals),
-        base: base ? base.result : null,
+        residual: summarise(bucket.residuals),
+        base: baseResult,
+        estimator: estimator,
+        // The band the other estimator would have given — kept so the choice
+        // is auditable rather than silent.
+        alternative: elevationRequested
+          ? { estimator: estimator === "free" ? "constrained" : "free",
+              elevation: estimator === "free" ? eCon : eFree }
+          : null,
         // The headline verdict, so a caller does not have to remember which
         // combination of flags means "cannot tell".
         unbounded: (elevation ? elevation.unbounded : false) || azimuth.unbounded,
@@ -2709,21 +2979,53 @@ var Gnomon = (function () {
 
       const elevation = input.elevation;
       const unbounded = !elevation || elevation.unbounded === true;
+      const azimuthUnbounded = !input.azimuth || input.azimuth.unbounded === true;
 
-      if (unbounded) {
+      /* Elevation going unbounded is not the end of the measurement — the
+         bearing comes from the shadow lying on the ground and frequently
+         survives marks that cannot pin the vertical scale (a shadow cast
+         toward the camera, small distant objects). Verify, Time and Locate
+         all run on azimuth alone, so a bounded azimuth downgrades this from
+         a refusal to a mode. Only when BOTH are gone is there nothing to
+         continue with. */
+      if (unbounded && azimuthUnbounded) {
         add("unbounded", "refuse", "The sun's direction is unbounded",
           "The marks do not fix a direction well enough to measure. This is not a wide answer — " +
-          "it is the absence of one, and it must not be read as a wide answer.");
+          "it is the absence of one, and it must not be read as a wide answer. What usually " +
+          "helps: mark objects farther apart in the frame, especially separated sideways from " +
+          "the shadow direction; prefer taller objects with longer shadows; and add a third " +
+          "object so the families have something to agree on.");
+      } else if (unbounded) {
+        add("azimuth-only", "warn", "Elevation is unmeasurable from these marks — the bearing still stands",
+          "The marks do not pin the sun's height: shadows running toward or away from the " +
+          "camera, or small distant objects, carry almost no vertical-scale information. The " +
+          "shadow's bearing does not depend on that scale and came back bounded, so every mode " +
+          "continues on azimuth alone. A third object, or one whose shadow crosses the frame " +
+          "sideways, would usually recover the elevation.");
       }
 
-      /* The refusal triggers on the BAND, not on the median. A band reaching
-         down into the unreliable regime is unreliable even if its midpoint
-         looks respectable. */
+      /* Two tiers, split on the MEDIAN. A median inside the low-sun regime
+         means the answer itself lives where refraction and the penumbra smear
+         dominate — refuse, though azimuth survives. A band whose low edge
+         merely dips below the line is a different situation: the Monte Carlo
+         already includes the penumbra physics, so the width IS the honesty,
+         and refusing a healthy median because its error bar has a soft low
+         side was firing on ordinary late-afternoon photographs. */
       if (!unbounded && Number.isFinite(elevation.p5) && elevation.p5 < LOW_SUN) {
-        add("low-sun", "refuse", "The sun is too low for a confident answer",
-          "Part of the measured band falls below " + LOW_SUN + "°. Down there refraction dominates, " +
-          "shadow tips blur into the ground, and a pixel of marking error becomes a large angular " +
-          "error. Any number from this regime should be treated as indicative only.");
+        const medianLow = Number.isFinite(elevation.p50) && elevation.p50 < LOW_SUN;
+        if (medianLow) {
+          add("low-sun", "refuse", "The sun is too low for a confident answer",
+            "The measured elevation sits below " + LOW_SUN + "°. Down there refraction dominates, " +
+            "the sun's disc smears shadow tips into the ground, and a pixel of marking error " +
+            "becomes a large angular error. Any elevation from this regime should be treated as " +
+            "indicative only — the shadow bearing does not depend on the vertical scale and " +
+            "still stands.");
+        } else {
+          add("low-sun", "warn", "The band's low side reaches into the low-sun regime",
+            "The low edge of the measured band falls below " + LOW_SUN + "°, where refraction and " +
+            "the penumbra smear soften the geometry. The band is already widened to account for " +
+            "that; read its low side as soft rather than sharp.");
+        }
       }
 
       // Declination, not the calendar: equinox dates drift year to year and the
@@ -4074,6 +4376,14 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         ? { from: state.reference[0], to: state.reference[1], bearing: Number(bearingInput.value) }
         : null,
     });
+    renderSunResult(result);
+    return result;
+  }
+
+  /* Rendering is separate from solving because the Monte Carlo may adopt the
+     other estimator after measuring both bands — the point value on screen
+     must then be re-rendered from the same instrument as the band around it. */
+  function renderSunResult(result) {
     state.sun = result;
 
     putRead("residual", result.residual.toFixed(2) + "°");
@@ -4107,6 +4417,9 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     Gnomon.debug.set("sun", "d_sun (toward)", "[" + result.dSun.map(Gnomon.fmt).join(", ") + "]");
     Gnomon.debug.set("sun", "determinant", result.determinant);
     Gnomon.debug.set("sun", "residual (deg)", result.residual);
+    Gnomon.debug.set("sun", "residual · in-plane spread", result.spreadResidual === null ? "no constrained solve" : result.spreadResidual);
+    Gnomon.debug.set("sun", "residual · coplanarity", result.coplanarityResidual);
+    Gnomon.debug.set("sun", "estimator", result.constrained ? "constrained (vanishing line)" : "free (ray family VP)");
     Gnomon.debug.set("sun", "elevation", result.elevation);
     Gnomon.debug.set("sun", "azimuth (relative)", result.azimuthRelative === null ? "no reference" : result.azimuthRelative);
     Gnomon.debug.set("sun", "azimuth (from north)", result.azimuth === null ? "no bearing" : result.azimuth);
@@ -4173,6 +4486,13 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     if (mcJob.done) {
       mcHandle = null;
       state.uncertainty = Gnomon.montecarlo.finish(mcJob);
+      /* The Monte Carlo measured both estimators and may have chosen the one
+         the quick solve did not use. Adopt its base solve, so the number on
+         the readout and the band around it come from the same instrument. */
+      if (state.uncertainty.base && state.sun
+          && state.uncertainty.base.estimator !== state.sun.estimator) {
+        renderSunResult(state.uncertainty.base);
+      }
       renderUncertainty(state.uncertainty);
       if (window.gnomonRenderScrubState) window.gnomonRenderScrubState();
       if (window.gnomonOnUncertainty) window.gnomonOnUncertainty(state.uncertainty);

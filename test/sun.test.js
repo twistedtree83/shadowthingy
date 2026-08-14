@@ -210,7 +210,11 @@ test("azimuth is relative when no reference bearing is supplied", () => {
   assert.ok(Number.isFinite(r.elevation), "elevation needs no reference direction");
 });
 
-test("a poorly conditioned v_sun drops elevation and offers azimuth only", () => {
+test("a poorly conditioned v_sun no longer kills elevation — the vanishing line rescues it", () => {
+  /* The vertical, shadow and ray directions are coplanar, so v_sun MUST lie on
+     the line through v_z and v_shadow. When the free ray family cannot fix a
+     point on its own, intersecting the rays with that line still can — so a
+     degenerate free estimate downgrades the estimator, not the answer. */
   const scene = build(ORIENTATIONS[0], SUNS[0]);
   const vps = vpsOf(scene);
   vps.sun = Object.assign({}, vps.sun, { wellConditioned: false, unbounded: true, conditionNumber: 0.4 });
@@ -219,8 +223,93 @@ test("a poorly conditioned v_sun drops elevation and offers azimuth only", () =>
     vanishing: vps, focalPx: scene.truth.focal, principalPoint: PRINCIPAL,
     objects: scene.objects, reference: northReference(scene),
   });
+  assert.equal(r.estimator, "constrained");
+  assert.equal(r.elevationUsable, true);
+  assert.equal(r.azimuthOnly, false);
+  near(r.elevation, SUNS[0].elevation, 0.5, "constrained elevation");
+});
+
+test("when the ground families are broken too, elevation drops and azimuth-only is offered", () => {
+  // The constraint is only information when the vanishing line is trustworthy;
+  // a line built from broken families would launder garbage into a
+  // confident-looking answer.
+  const scene = build(ORIENTATIONS[0], SUNS[0]);
+  const vps = vpsOf(scene);
+  vps.sun = Object.assign({}, vps.sun, { wellConditioned: false, unbounded: true });
+  vps.shadow = Object.assign({}, vps.shadow, { wellConditioned: false, unbounded: true });
+
+  const r = sun.solve({
+    vanishing: vps, focalPx: scene.truth.focal, principalPoint: PRINCIPAL,
+    objects: scene.objects, reference: northReference(scene),
+  });
   assert.equal(r.elevationUsable, false);
   assert.equal(r.azimuthOnly, true);
-  // Azimuth survives: it comes from the shadow on the ground, not from the ray.
-  assert.ok(Number.isFinite(r.azimuth));
+});
+
+// ── The constrained estimator, exercised on its own ──────────────────────────
+// It must be as exact as the free one on clean scenes, and its residual must
+// still see breakage — a rescue path with no working validity check would be a
+// confident number resting on nothing.
+
+test("the constrained estimator recovers every valid scene exactly", () => {
+  for (const o of ORIENTATIONS) {
+    for (const s of SUNS) {
+      const r = solveScene(build(o, s), { estimator: "constrained" });
+      assert.equal(r.constrained, true, "the constrained path must actually run");
+      near(r.elevation, s.elevation, 0.5, `${o.name} ${s.elevation}° constrained`);
+    }
+  }
+});
+
+test("the constrained estimator's residual still rises for a leaning object", () => {
+  const clean = solveScene(build(ORIENTATIONS[0], SUNS[0]), { estimator: "constrained" });
+  near(clean.residual, 0, 0.01, "clean constrained residual");
+  const bent = build(ORIENTATIONS[0], SUNS[0], [
+    { base: [-4, 6], height: 2.1 },
+    { base: [3, 11], height: 1.4, lean: { tilt: 12, bearing: 70 } },
+    { base: [7, 4], height: 3.0 },
+    { base: [-2, 15], height: 2.6 },
+  ]);
+  const r = solveScene(bent, { estimator: "constrained" });
+  assert.ok(r.residual > 1, `a 12° lean should be plainly visible to the constrained check, got ${r.residual}°`);
+});
+
+test("the constrained estimator's residual still rises for a composited object", () => {
+  const composite = build(ORIENTATIONS[0], SUNS[0], [
+    { base: [-4, 6], height: 2.1 },
+    { base: [3, 11], height: 1.4 },
+    { base: [7, 4], height: 3.0 },
+    { base: [-2, 15], height: 2.6, sun: { elevation: 41, azimuth: 250 } },
+  ]);
+  const r = solveScene(composite, { estimator: "constrained" });
+  assert.ok(r.residual > 1, `a differently-lit object should show up, got ${r.residual}°`);
+});
+
+test("a uniform ground tilt stays clean under the constrained estimator too", () => {
+  const sloped = build(ORIENTATIONS[0], SUNS[0], null, { groundNormal: [0.17, 0.09, 1] });
+  const r = solveScene(sloped, { estimator: "constrained" });
+  near(r.residual, 0, 0.01, "constrained residual on a uniform slope");
+  near(r.elevation, SUNS[0].elevation, 0.5, "constrained elevation on a uniform slope");
+});
+
+// ── Shadows toward and away from the camera ──────────────────────────────────
+// The user-reported geometries: a shadow running at the viewer or directly
+// away foreshortens the ray family until its lines nearly coincide. Both
+// estimators must at least agree with ground truth on clean marks.
+
+test("shadows cast toward and away from the camera are solvable", () => {
+  const o = ORIENTATIONS[0]; // camera yaw 8°
+  for (const azimuth of [8, 188]) {
+    for (const elevation of [15, 30]) {
+      const scene = build(o, { elevation, azimuth }, [
+        { base: [-2, 8], height: 2.0 },
+        { base: [2, 10], height: 1.6 },
+        { base: [0, 14], height: 2.4 },
+      ]);
+      const free = solveScene(scene);
+      const constrained = solveScene(scene, { estimator: "constrained" });
+      near(free.elevation, elevation, 0.5, `free, azimuth ${azimuth}`);
+      near(constrained.elevation, elevation, 0.5, `constrained, azimuth ${azimuth}`);
+    }
+  }
 });
