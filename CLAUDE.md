@@ -85,3 +85,29 @@ This repo is driven by an autonomous Ralph loop.
 - `scripts2/progress/` — one file per shipped task, plus `INDEX.md`.
 
 Issue #1 is the spec. **Never work it directly.**
+
+## Shipping and deployment
+
+The app is live at https://twistedtree83.github.io/Shadowy/ — deployed by
+GitHub Actions (`.github/workflows/pages.yml`) from the `main` branch of the
+mirror repo `twistedtree83/Shadowy`. The deploy runs `npm run verify` first;
+a red gate never deploys.
+
+**Every push to origin is followed by the mirror push.** The `shadowy` remote
+carries a configured refspec (`sprint/gnomon-mvp` → `main`), so shipping is:
+
+```bash
+git push origin sprint/gnomon-mvp
+git push shadowy        # refspec lands it on Shadowy main → deploys to Pages
+```
+
+If the `shadowy` remote is missing (fresh clone):
+
+```bash
+git remote add shadowy https://github.com/twistedtree83/Shadowy.git
+git config remote.shadowy.push "refs/heads/sprint/gnomon-mvp:refs/heads/main"
+```
+
+A second checkout of this repo may exist one directory up (the user opens its
+`gnomon.html` directly). After pushing, fast-forward it too if present, so the
+copy the user double-clicks never goes stale.
