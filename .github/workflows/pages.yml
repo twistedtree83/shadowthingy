@@ -1,0 +1,49 @@
+# Deploys the app to GitHub Pages. The artifact is gnomon.html and nothing
+# else — the app is one self-contained file by hard constraint, and the deploy
+# preserves that: index.html is a deploy-time copy of gnomon.html, not a
+# second source file that could drift from it.
+#
+# The verify gate runs first. A red gate never deploys.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify — tests, purity gate, network gate
+        run: npm run verify
+
+      - name: Stage the single file
+        run: |
+          mkdir _site
+          cp gnomon.html _site/gnomon.html
+          cp gnomon.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
