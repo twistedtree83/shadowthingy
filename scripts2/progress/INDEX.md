@@ -19,7 +19,7 @@ Graph: `scripts2/prd.json` · Branch: `sprint/gnomon-mvp` · Parent: #1
 | G13 | #18 | Three modes: Verify, Time, Locate | yes | **shipped** — [G13.md](G13.md) |
 | G14 | #19 | Guards: low sun, the equinoxes, and a broken residual | yes | **shipped** — [G14.md](G14.md) |
 | G15 | #20 | Report export: one self-contained file that outlives the session | yes | **shipped** — [G15.md](G15.md) |
-| G16 | #21 | Visual system: import the Claude Design source | **no** | pending — human gate (`/design-login`) |
+| G16 | #21 | Visual system: import the Claude Design source | **no** | **shipped** — [G16.md](G16.md) |
 | G17 | #22 | Tuning and honesty pass | **no** | pending — human gate (judgement) |
 
 ## The two lanes
@@ -49,15 +49,11 @@ above is the one of record. No content was lost — each is covered by a ticket 
 
 ## Terminus — the AFK run is complete
 
-**15 of 17 shipped.** Both remaining tasks are human gates by construction.
+**16 of 17 shipped.** G16 cleared its human gate on 2026-08-14: an interactive
+session with DesignSync access ran the import — see [G16.md](G16.md). The one
+remaining task is a human gate by construction.
 
 ```
-WAITING: G16 (#21) — import the Claude Design source. Needs an interactive
-         /design-login, which no autonomous session can perform. Either run the
-         import from an interactive Claude Code session, use Claude Design's
-         "Send to Claude Code Web", or paste Gnomon.dc.html + image-slot.js +
-         support.js into the session.
-
 WAITING: G17 (#22) — the tuning and honesty pass. Every threshold in the app is
          a first estimate and nobody can assert from a test that a band READS as
          honest. See the list below.

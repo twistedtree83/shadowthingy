@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gnomon — solution band</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+<style>
+  :root{
+    --paper:#F6F5F2; --panel:#FFFFFF; --ink:#1A1D1C; --dim:#6C716E; --faint:#9AA09C;
+    --rule:#DAD8D2; --rule2:#C2BFB7; --accent:#C4531D; --land:#EBE9E4; --coast:#B9B6AE;
+  }
+  html[data-theme="dark"]{
+    --paper:#131516; --panel:#191C1D; --ink:#E9EAE7; --dim:#8E9491; --faint:#6A706D;
+    --rule:#2C3032; --rule2:#3C4144; --accent:#E0703A; --land:#1E2223; --coast:#3A4043;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  #wrap{height:100%;display:flex;flex-direction:column}
+  #mapbox{flex:1;min-height:0;position:relative}
+  svg{display:block;width:100%;height:100%}
+  .mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+  .lbl{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+  #bar{border-top:1px solid var(--rule);padding:12px 16px 14px;display:flex;flex-direction:column;gap:9px;background:var(--panel)}
+  #row1{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:1px;background:var(--rule2)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:2px;height:18px;background:var(--accent);border:0;margin-top:-9px;border-radius:0}
+  #ticks{display:flex;justify-content:space-between}
+  #ticks span{font-size:9px;letter-spacing:.08em;color:var(--faint);font-family:"IBM Plex Mono",monospace}
+  #readout{display:flex;gap:22px;align-items:baseline}
+  #readout b{font-weight:500;font-size:15px;font-family:"IBM Plex Mono",monospace}
+  .k{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-right:6px}
+  #legend{position:absolute;left:14px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+  #legend div{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.06em;color:var(--dim)}
+  .sw{width:26px;height:7px}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="mapbox">
+    <svg id="map"></svg>
+    <div id="legend"></div>
+  </div>
+  <div id="bar">
+    <div id="row1">
+      <div id="readout">
+        <span><span class="k">assumed utc</span><b id="tval">14:20</b></span>
+        <span><span class="k">subsolar</span><b id="sval"></b></span>
+        <span><span class="k">band width</span><b id="bval">±1.8°</b></span>
+      </div>
+      <span class="lbl" id="mode">elevation only · azimuth unconstrained</span>
+    </div>
+    <input id="scrub" type="range" min="0" max="1439" step="1" value="860">
+    <div id="ticks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+  </div>
+</div>
+<script>
+const P = new URLSearchParams(location.search);
+const PROJ = P.get('proj') === 'flat' ? 'flat' : 'ortho';
+const THEME = P.get('theme') === 'dark' ? 'dark' : 'light';
+const COMPACT = P.get('compact') === '1';
+const AZ = P.get('az') === '1';            // azimuth known -> collapsed region
+const ELEV = +(P.get('h') || 34.2);
+const TOL  = +(P.get('tol') || 1.8);
+const DECL = +(P.get('decl') || -2.4);     // solar declination for the claimed date
+const AZOBS = +(P.get('azobs') || 118);
+const VIEWLON = +(P.get('vlon') || 18);   // globe stays put; the band sweeps across it
+const VIEWLAT = +(P.get('vlat') || 20);
+document.documentElement.setAttribute('data-theme', THEME);
+if (COMPACT) { document.getElementById('bar').style.padding = '9px 12px 11px'; document.getElementById('legend').style.display='none'; }
+
+const svg = d3.select('#map');
+let W = 0, H = 0, proj, path, world = null;
+const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+
+const defs = svg.append('defs');
+defs.append('filter').attr('id','soft').attr('x','-30%').attr('y','-30%')
+  .attr('width','160%').attr('height','160%')
+  .append('feGaussianBlur').attr('stdDeviation', PROJ==='flat'?3.2:2.6);
+
+const gSea = svg.append('g'), gGrat = svg.append('g'), gLand = svg.append('g'),
+      gBand = svg.append('g').attr('filter','url(#soft)'), gCore = svg.append('g'),
+      gSun = svg.append('g');
+
+function setProjection(){
+  const b = document.getElementById('mapbox').getBoundingClientRect();
+  W = b.width; H = b.height;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+  if (PROJ === 'ortho') {
+    proj = d3.geoOrthographic().rotate([-VIEWLON, -VIEWLAT, 0])
+      .fitExtent([[26,26],[W-26,H-26]], {type:'Sphere'});
+  } else {
+    proj = d3.geoEquirectangular().fitExtent([[8,8],[W-8,H-8]], {type:'Sphere'});
+  }
+  path = d3.geoPath(proj);
+}
+let tMin = 860;
+const subLat = () => DECL;
+const subLon = () => -15 * (tMin/60 - 12);
+
+function bandRings(){
+  const r = 90 - ELEV, rings = [];
+  for (let i = -1; i <= 1; i += 0.25) rings.push({ r: r + i*TOL, w: 1 - Math.abs(i)*0.62 });
+  return rings;
+}
+
+// solar elevation & azimuth at a point, given subsolar point
+function toXYZ(lat, lon){ const p=Math.PI/180, cl=Math.cos(lat*p);
+  return [cl*Math.cos(lon*p), cl*Math.sin(lon*p), Math.sin(lat*p)]; }
+function localAz(lat, lon, s){
+  const p=Math.PI/180, la=lat*p, lo=lon*p;
+  const up=[Math.cos(la)*Math.cos(lo), Math.cos(la)*Math.sin(lo), Math.sin(la)];
+  const east=[-Math.sin(lo), Math.cos(lo), 0];
+  const north=[-Math.sin(la)*Math.cos(lo), -Math.sin(la)*Math.sin(lo), Math.cos(la)];
+  const d=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  const az=Math.atan2(d(east,s), d(north,s))/p;
+  return { az: (az+360)%360, el: Math.asin(d(up,s))/p };
+}
+function collapsed(){                       // points on the band matching observed azimuth
+  const s = toXYZ(subLat(), subLon()), out = [];
+  const c = d3.geoCircle().center([subLon(), subLat()]).radius(90-ELEV).precision(0.6)();
+  for (const [lon,lat] of c.coordinates[0]) {
+    const q = localAz(lat, lon, s);
+    if (Math.abs(((q.az - AZOBS + 540) % 360) - 180) < 6) out.push([lon,lat]);
+  }
+  return out;
+}
+
+function draw(){
+  const accent = css('--accent');
+  gSea.selectAll('*').remove(); gGrat.selectAll('*').remove();
+  gLand.selectAll('*').remove(); gBand.selectAll('*').remove();
+  gCore.selectAll('*').remove(); gSun.selectAll('*').remove();
+
+  gSea.append('path').attr('d', path({type:'Sphere'}))
+    .attr('fill', css('--panel')).attr('stroke', css('--rule2')).attr('stroke-width',1);
+  gGrat.append('path').attr('d', path(d3.geoGraticule().step([15,15])()))
+    .attr('fill','none').attr('stroke', css('--rule')).attr('stroke-width',0.6);
+  if (world) {
+    gLand.append('path').attr('d', path(world))
+      .attr('fill', css('--land')).attr('stroke', css('--coast')).attr('stroke-width',0.55);
+  }
+  // solution band: soft-edged tolerance region
+  for (const ring of bandRings()){
+    gBand.append('path')
+      .attr('d', path(d3.geoCircle().center([subLon(), subLat()]).radius(ring.r)()))
+      .attr('fill','none').attr('stroke', accent)
+      .attr('stroke-width', 2.4 * ring.w + 1.2)
+      .attr('stroke-opacity', 0.20 * ring.w + 0.05);
+  }
+  gCore.append('path')
+    .attr('d', path(d3.geoCircle().center([subLon(), subLat()]).radius(90-ELEV)()))
+    .attr('fill','none').attr('stroke', accent).attr('stroke-width',1)
+    .attr('stroke-opacity',0.55).attr('stroke-dasharray','1 3');
+
+  if (AZ){
+    const pts = collapsed();
+    for (const pt of pts){
+      const xy = proj(pt); if (!xy) continue;
+      gSun.append('circle').attr('cx',xy[0]).attr('cy',xy[1]).attr('r',13)
+        .attr('fill',accent).attr('opacity',0.10).attr('filter','url(#soft)');
+      gSun.append('circle').attr('cx',xy[0]).attr('cy',xy[1]).attr('r',3.2)
+        .attr('fill',accent).attr('opacity',0.9);
+    }
+  }
+  // subsolar point marker
+  const sp = proj([subLon(), subLat()]);
+  if (sp && (PROJ==='flat' || d3.geoDistance([subLon(),subLat()], [-proj.rotate()[0], -proj.rotate()[1]]) < Math.PI/2)){
+    gSun.append('circle').attr('cx',sp[0]).attr('cy',sp[1]).attr('r',2)
+      .attr('fill','none').attr('stroke',css('--dim')).attr('stroke-width',1);
+    gSun.append('path').attr('d',`M${sp[0]-6},${sp[1]}h12M${sp[0]},${sp[1]-6}v12`)
+      .attr('stroke',css('--dim')).attr('stroke-width',0.7);
+  }
+  const fmt = v => (v<0?'−':'') + Math.abs(v).toFixed(1) + '°';
+  document.getElementById('sval').textContent = fmt(subLat()) + ' ' + fmt(((subLon()+540)%360)-180);
+  document.getElementById('tval').textContent =
+    String(Math.floor(tMin/60)).padStart(2,'0') + ':' + String(tMin%60).padStart(2,'0');
+  document.getElementById('bval').textContent = '±' + TOL.toFixed(1) + '°';
+  document.getElementById('mode').textContent = AZ
+    ? 'elevation + shadow bearing ' + AZOBS.toFixed(0) + '° · collapsed'
+    : 'elevation only · azimuth unconstrained';
+}
+
+const legend = document.getElementById('legend');
+[['solution band  ' + (90-ELEV).toFixed(1) + '° ± ' + TOL.toFixed(1) + '° from subsolar', 'accent'],
+ ['coastline 110 m · graticule 15°', 'rule']].forEach(([t,k])=>{
+  const d = document.createElement('div');
+  const s = document.createElement('span'); s.className='sw';
+  s.style.background = k==='accent'
+    ? 'linear-gradient(90deg,transparent,var(--accent),transparent)' : 'var(--coast)';
+  s.style.height = k==='accent' ? '7px' : '1px';
+  d.append(s); const l=document.createElement('span'); l.textContent=t; d.append(l); legend.append(d);
+});
+
+document.getElementById('scrub').addEventListener('input', e => { tMin = +e.target.value; draw(); });
+window.addEventListener('resize', () => { setProjection(); draw(); });
+setProjection(); draw();
+d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json')
+  .then(topo => { world = topojson.feature(topo, topo.objects.countries); draw(); });
+
+// slow auto-sweep for the persuasive moment, unless the user grabs the scrubber
+let auto = P.get('auto') === '1', raf;
+if (auto){
+  const sc = document.getElementById('scrub');
+  sc.addEventListener('pointerdown', ()=>{ auto=false; });
+  const step = () => { if(!auto) return; tMin = (tMin + 2) % 1440; sc.value = tMin; draw(); raf = setTimeout(step, 70); };
+  step();
+}
+</script>
+</body>
+</html>

@@ -17,28 +17,58 @@
   /* An instrument, not a dashboard. A number on screen should read as a
      measurement, not as a conclusion — so: monospace numerals, hairline rules,
      one accent colour, and nothing decorative that could be mistaken for
-     emphasis. Precision is conveyed by the error band, never by the type. */
+     emphasis. Precision is conveyed by the error band, never by the type.
+
+     The palette and component language come from the Claude Design source
+     (design/Gnomon.dc.html). That source specifies IBM Plex; fonts are network
+     fetches and the network gate forbids them, so the nearest system stacks
+     stand in. */
   :root {
-    --ground:      #101215;
-    --panel:       #16191d;
-    --raised:      #1d2126;
-    --rule:        #2a2f36;
-    --ink:         #d6dae0;
-    --ink-dim:     #8b939d;
-    --ink-faint:   #5b636d;
-    --accent:      #e0a44c;
-    --bad:         #d9705f;
-    --good:        #6fae7f;
+    color-scheme: light dark;
+    --paper:  #F6F5F2;
+    --panel:  #FFFFFF;
+    --sunk:   #EFEEEA;
+    --ink:    #1A1D1C;
+    --dim:    #6C716E;
+    --faint:  #9AA09C;
+    --rule:   #DAD8D2;
+    --rule2:  #C2BFB7;
+    --accent: #C4531D;
+    --land:   #EBE9E4;
+    --coast:  #B9B6AE;
+    --good:   #2F6B40;
+    --bad:    #A33527;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  /* The design source carries both palettes; the OS picks. No storage means no
+     persisted toggle, and the canvases re-read these tokens on every redraw. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:  #131516;
+      --panel:  #191C1D;
+      --sunk:   #101213;
+      --ink:    #E9EAE7;
+      --dim:    #8E9491;
+      --faint:  #6A706D;
+      --rule:   #2C3032;
+      --rule2:  #3C4144;
+      --accent: #E0703A;
+      --land:   #1E2223;
+      --coast:  #3A4043;
+      --good:   #6FAE7F;
+      --bad:    #D9705F;
+    }
   }
 
   * { box-sizing: border-box; }
 
   html, body {
     margin: 0; height: 100%;
-    background: var(--ground); color: var(--ink);
+    background: var(--paper); color: var(--ink);
     font-family: var(--sans); font-size: 14px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
   }
 
   /* Every numeral in the app is tabular and monospace, so columns of readings
@@ -51,19 +81,19 @@
   body { display: flex; flex-direction: column; }
 
   header {
-    display: flex; align-items: baseline; gap: 1rem;
-    padding: .55rem 1rem;
+    display: flex; align-items: center; gap: 14px;
+    height: 46px; padding: 0 16px; flex-shrink: 0;
     border-bottom: 1px solid var(--rule);
     background: var(--panel);
   }
   header h1 {
-    margin: 0; font-size: 13px; font-weight: 600;
-    letter-spacing: .14em; text-transform: uppercase;
+    margin: 0; font-family: var(--mono); font-size: 12px; font-weight: 500;
+    letter-spacing: .26em; text-transform: uppercase;
   }
-  header h1 .mark { color: var(--accent); }
-  header .tagline { color: var(--ink-faint); font-size: 12px; }
+  header .divider { width: 1px; height: 16px; background: var(--rule); }
+  header .tagline { font-family: var(--mono); font-size: 11px; color: var(--dim); }
   header .spacer { flex: 1; }
-  header .hint { color: var(--ink-faint); font-size: 11px; font-family: var(--mono); }
+  header .hint { color: var(--faint); font-size: 10px; font-family: var(--mono); letter-spacing: .08em; }
 
   main {
     flex: 1; display: grid;
@@ -73,15 +103,15 @@
     min-height: 0;
   }
 
-  #region-canvas  { grid-area: canvas; border-right: 1px solid var(--rule); }
-  #region-readout { grid-area: readout; overflow-y: auto; }
-  #region-result  { grid-area: result;  border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+  #region-canvas  { grid-area: canvas; border-right: 1px solid var(--rule); background: var(--panel); }
+  #region-readout { grid-area: readout; overflow-y: auto; background: var(--panel); }
+  #region-result  { grid-area: result;  border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); background: var(--sunk); }
 
   section { min-width: 0; min-height: 0; }
 
   .region-label {
-    font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
-    color: var(--ink-faint); padding: .5rem 1rem .35rem;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--dim); padding: .55rem 1rem .4rem;
     border-bottom: 1px solid var(--rule);
   }
 
@@ -89,17 +119,23 @@
   .canvas-stage {
     flex: 1; display: flex; align-items: center; justify-content: center;
     position: relative; overflow: hidden; min-height: 0;
+    background: var(--sunk);
   }
   .empty-state {
-    text-align: center; color: var(--ink-faint); max-width: 30rem; padding: 2rem;
+    text-align: center; color: var(--dim); max-width: 30rem; padding: 18px 24px;
+    border: 1px solid var(--rule2);
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
   }
-  .empty-state strong { display: block; color: var(--ink-dim); font-weight: 500; margin-bottom: .4rem; }
-  .empty-state .rule { height: 1px; background: var(--rule); margin: 1.25rem auto; width: 4rem; }
+  .empty-state strong {
+    display: block; color: var(--ink); font-weight: 500; margin-bottom: .45rem;
+    font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  }
+  .empty-state .rule { height: 1px; background: var(--rule); margin: 1.1rem auto; width: 4rem; }
   .empty-state small { font-size: 11.5px; line-height: 1.65; display: block; }
 
   #region-result { min-height: 0; display: flex; flex-direction: column; }
   .result-split { flex: 1; display: flex; gap: 0; min-height: 0; overflow: hidden; }
-  .result-body { padding: .85rem 1rem; color: var(--ink-faint); font-size: 12.5px; overflow-y: auto; flex: 1; }
+  .result-body { padding: .85rem 1rem; color: var(--dim); font-size: 12.5px; overflow-y: auto; flex: 1; }
 
   .map-pane {
     flex-shrink: 0; padding: .5rem .75rem .5rem 1rem;
@@ -107,61 +143,80 @@
   }
   #map-canvas { display: block; cursor: grab; touch-action: none; }
   #map-canvas:active { cursor: grabbing; }
-  .map-caption { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); text-align: center; }
+  .map-caption { font-family: var(--mono); font-size: 10px; color: var(--faint); text-align: center; }
 
-  .scrubber { display: flex; align-items: center; gap: .3rem; }
+  .scrubber { display: flex; align-items: center; gap: .4rem; }
   .scrubber button {
-    background: var(--raised); border: 1px solid var(--rule); color: var(--ink-dim);
-    font: inherit; font-size: 11px; line-height: 1; padding: .2rem .35rem;
-    border-radius: 2px; cursor: pointer; flex-shrink: 0;
+    background: none; border: 1px solid var(--rule2); color: var(--dim);
+    font-family: var(--mono); font-size: 10px; line-height: 1; padding: .25rem .4rem;
+    cursor: pointer; flex-shrink: 0;
   }
   .scrubber button:disabled { opacity: .35; cursor: default; }
   .scrubber button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-  .scrubber input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); height: 1rem; }
+  /* The scrubber thumb is a hairline in the accent — a cursor over the day,
+     not a widget. */
+  .scrubber input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    flex: 1; min-width: 0; height: 20px; background: transparent; margin: 0;
+  }
+  .scrubber input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: var(--rule2); }
+  .scrubber input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 2px; height: 18px; background: var(--accent);
+    border: 0; border-radius: 0; margin-top: -9px;
+  }
+  .scrubber input[type="range"]::-moz-range-track { height: 1px; background: var(--rule2); }
+  .scrubber input[type="range"]::-moz-range-thumb {
+    width: 2px; height: 18px; background: var(--accent); border: 0; border-radius: 0;
+  }
+  .scrubber input[type="range"]:disabled::-webkit-slider-thumb { background: var(--faint); }
+  .scrubber input[type="range"]:disabled::-moz-range-thumb { background: var(--faint); }
   .scrub-time {
-    font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim);
+    font-family: var(--mono); font-size: 10.5px; color: var(--dim);
     width: 3.1rem; text-align: right; flex-shrink: 0;
   }
   .scrub-time.scrubbed { color: var(--accent); }
 
   .result-main { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .mode-tabs {
-    display: flex; align-items: center; gap: .35rem;
-    padding: .4rem 1rem; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: .6rem;
+    padding: .45rem 1rem; border-bottom: 1px solid var(--rule);
   }
+  .mode-tabs .seg { display: flex; border: 1px solid var(--rule2); }
   .mode-tabs button {
-    background: none; border: 1px solid transparent; color: var(--ink-faint);
-    font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-    padding: .18rem .5rem; border-radius: 2px; cursor: pointer;
+    background: none; border: 0; color: var(--dim);
+    font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+    padding: 5px 14px; cursor: pointer;
   }
-  .mode-tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-  .mode-hint { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
+  .mode-tabs .seg button + button { border-left: 1px solid var(--rule2); }
+  .mode-tabs button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  .mode-hint { margin-left: auto; font-size: 11px; color: var(--faint); }
 
-  /* The verdict is the quotable output, so it gets the weight. */
+  /* The verdict is the quotable output, so it gets the weight. The tag is a
+     bordered chip, not a filled banner — a reading, not a verdict lamp. */
   .verdict { padding: .2rem 0 .7rem; }
   .verdict .tag {
-    display: inline-block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
-    text-transform: uppercase; padding: .12rem .4rem; border-radius: 2px; margin-bottom: .4rem;
+    display: inline-block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+    text-transform: uppercase; padding: .14rem .45rem; margin-bottom: .45rem;
+    border: 1px solid var(--rule2); color: var(--dim);
   }
-  .verdict.consistent .tag { background: var(--good); color: #0d1a10; font-weight: 600; }
-  .verdict.inconsistent .tag { background: var(--bad); color: #1f0b08; font-weight: 600; }
-  .verdict.cannot-tell .tag { border: 1px solid var(--rule); color: var(--ink-faint); }
-  .verdict .sentence { color: var(--ink); font-size: 13.5px; line-height: 1.55; }
+  .verdict.consistent .tag { border-color: var(--good); color: var(--good); }
+  .verdict.inconsistent .tag { border-color: var(--bad); color: var(--bad); }
+  .verdict .sentence { color: var(--ink); font-size: 15px; line-height: 1.5; }
 
   #timeline { display: block; width: 100%; height: 92px; }
-  .window-list { font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim); margin-top: .4rem; }
+  .window-list { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-top: .4rem; }
   .window-list .peak { color: var(--accent); }
 
   .readout-group { border-bottom: 1px solid var(--rule); padding: .75rem 1rem .9rem; }
   .readout-group h2 {
-    margin: 0 0 .55rem; font-size: 10px; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+    margin: 0 0 .55rem; font-family: var(--mono); font-size: 9.5px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--dim); font-weight: 500;
   }
 
   .reading { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; padding: .16rem 0; }
-  .reading .k { color: var(--ink-dim); font-size: 12px; }
+  .reading .k { color: var(--dim); font-size: 12px; }
   .reading .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
-  .reading .v.pending { color: var(--ink-faint); }
+  .reading .v.pending { color: var(--faint); }
 
   /* The debug panel is built in G1 and extended by every slice after it.
      Debugging projective geometry without one is guesswork. */
@@ -177,25 +232,25 @@
     padding: .55rem 1rem; border-bottom: 1px solid var(--rule);
   }
   #debug-panel .dbg-head h2 {
-    margin: 0; font-size: 10px; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--accent); font-weight: 600;
+    margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--ink); font-weight: 600;
   }
   #debug-panel .dbg-head .spacer { flex: 1; }
-  #debug-panel .dbg-head small { color: var(--ink-faint); font-family: var(--mono); font-size: 11px; }
+  #debug-panel .dbg-head small { color: var(--faint); font-family: var(--mono); font-size: 11px; }
   #debug-panel .dbg-body { flex: 1; overflow-y: auto; padding: .5rem 0 2rem; }
-  #debug-panel .dbg-empty { color: var(--ink-faint); padding: 1rem; font-size: 12px; }
+  #debug-panel .dbg-empty { color: var(--faint); padding: 1rem; font-size: 12px; }
 
   .dbg-section { border-bottom: 1px solid var(--rule); padding: .5rem 1rem .65rem; }
   .dbg-section h3 {
-    margin: 0 0 .3rem; font-size: 10px; letter-spacing: .14em;
-    text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+    margin: 0 0 .3rem; font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--dim); font-weight: 500;
   }
   .dbg-row { display: flex; gap: .75rem; align-items: baseline; padding: .1rem 0; font-family: var(--mono); font-size: 11.5px; }
-  .dbg-row .k { color: var(--ink-dim); min-width: 11rem; flex-shrink: 0; }
+  .dbg-row .k { color: var(--dim); min-width: 11rem; flex-shrink: 0; }
   .dbg-row .v { color: var(--ink); word-break: break-all; font-variant-numeric: tabular-nums; }
 
   .suite { border-bottom: 1px solid var(--rule); padding: .5rem 1rem .6rem; }
-  .suite h3 { margin: 0 0 .3rem; font-size: 11px; color: var(--ink-dim); font-weight: 600; }
+  .suite h3 { margin: 0 0 .3rem; font-size: 11px; color: var(--dim); font-weight: 600; }
   .check { display: flex; gap: .55rem; align-items: baseline; padding: .09rem 0; font-size: 11.5px; }
   .check .badge {
     font-family: var(--mono); font-size: 10px; letter-spacing: .06em;
@@ -203,62 +258,61 @@
   }
   .check.pass .badge { color: var(--good); }
   .check.fail .badge { color: var(--bad); }
-  .check .label { color: var(--ink-dim); }
-  .check .detail { color: var(--ink-faint); font-family: var(--mono); font-size: 10.5px; margin-left: auto; text-align: right; }
+  .check .label { color: var(--dim); }
+  .check .detail { color: var(--faint); font-family: var(--mono); font-size: 10.5px; margin-left: auto; text-align: right; }
   .check.fail .label { color: var(--ink); }
 
   .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .5rem; margin-bottom: .6rem; }
   .field-grid label {
-    display: flex; flex-direction: column; gap: .12rem;
-    font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint);
+    display: flex; flex-direction: column; gap: .14rem;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
   }
   .field-grid label:has(#in-date), .field-grid label:has(#in-time) { grid-column: span 1; }
   .field-grid input {
-    background: var(--raised); border: 1px solid var(--rule); color: var(--ink);
-    padding: .22rem .35rem; font-size: 12px; border-radius: 2px; width: 100%;
+    background: var(--panel); border: 1px solid var(--rule2); color: var(--ink);
+    padding: .24rem .35rem; font-size: 12px; border-radius: 0; width: 100%;
     text-transform: none; letter-spacing: 0;
   }
   .field-grid input:focus { outline: none; border-color: var(--accent); }
 
-  .note { margin: .5rem 0 0; font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
-  .note.warn { color: var(--accent); }
-
-  /* Three families, three colours. They have to be distinguishable at a glance
-     while overlaying a photograph of arbitrary content, so: cool for the
-     verticals, green for the ground, and the accent for the rays. */
-  :root {
-    --vertical: #7fb2e5;
-    --shadow-line: #86c98b;
-    --ray: #e0a44c;
+  #in-bearing {
+    width: 5rem; background: var(--panel); border: 1px solid var(--rule2); color: var(--ink);
+    padding: .1rem .3rem; font-size: 11.5px; border-radius: 0;
   }
+  #in-bearing:disabled { color: var(--faint); }
+  #in-bearing:focus { outline: none; border-color: var(--accent); }
+
+  .note { margin: .5rem 0 0; font-size: 11px; color: var(--faint); line-height: 1.5; }
+  .note.warn { color: var(--accent); }
 
   .mark-toolbar {
     display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
-    padding: .4rem 1rem; border-bottom: 1px solid var(--rule);
+    padding: .45rem 1rem; border-bottom: 1px solid var(--rule);
   }
   .mark-toolbar button {
-    background: var(--raised); border: 1px solid var(--rule); color: var(--ink-dim);
-    font: inherit; font-size: 11px; padding: .2rem .5rem; border-radius: 2px; cursor: pointer;
+    background: none; border: 1px solid var(--rule2); color: var(--dim);
+    font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    padding: 5px 10px; cursor: pointer;
   }
-  .mark-toolbar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .mark-toolbar button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--panel); }
   .mark-toolbar button:disabled { opacity: .4; cursor: default; }
   .mark-toolbar .prompt {
-    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-faint);
+    margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--dim);
   }
   .mark-toolbar .prompt b { color: var(--accent); font-weight: 600; }
-  .mark-toolbar .swatch { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .25rem; }
 
   .canvas-stage.dragover { outline: 1px dashed var(--accent); outline-offset: -8px; }
   .canvas-stage.marking { cursor: crosshair; }
 
   /* The loupe. Placing a mark on the actual shadow tip rather than
      approximately near it is worth a few pixels of accuracy in every
-     downstream angle, and a shadow tip is a soft edge at the best of times. */
+     downstream angle, and a shadow tip is a soft edge at the best of times.
+     Accent ring, because the loupe only exists while a mark is being placed. */
   #loupe {
     position: fixed; width: 140px; height: 140px; border-radius: 50%;
-    border: 1px solid var(--rule); box-shadow: 0 4px 16px rgba(0,0,0,.55);
+    border: 1px solid var(--accent); box-shadow: 0 2px 14px rgba(0, 0, 0, .18);
     pointer-events: none; display: none; z-index: 30; overflow: hidden;
-    background: var(--panel);
+    background: var(--sunk);
   }
   #loupe.live { display: block; }
   #loupe canvas { display: block; width: 100%; height: 100%; }
@@ -268,9 +322,9 @@
     font-family: var(--mono); font-size: 11px;
   }
   .object-row .idx { color: var(--accent); width: 1.4rem; flex-shrink: 0; }
-  .object-row .coords { color: var(--ink-faint); flex: 1; }
+  .object-row .coords { color: var(--faint); flex: 1; }
   .object-row button {
-    background: none; border: none; color: var(--ink-faint); cursor: pointer;
+    background: none; border: none; color: var(--faint); cursor: pointer;
     font: inherit; font-size: 11px; padding: 0 .2rem;
   }
   .object-row button:hover { color: var(--bad); }
@@ -279,17 +333,18 @@
   .stage-wrap.live { display: block; }
 
   /* Integrity flags. A crop is the one that quietly invalidates the camera
-     model, so "loud" has to actually look loud rather than being a caption. */
+     model, so "loud" has to actually look loud rather than being a caption —
+     it is the one legitimate use of a filled accent chip. */
   .flags { display: flex; flex-direction: column; gap: .4rem; padding: .3rem 1rem .2rem; }
   .flag { display: flex; gap: .6rem; align-items: baseline; font-size: 12px; line-height: 1.5; }
   .flag .tag {
-    font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
-    padding: .1rem .35rem; border-radius: 2px; flex-shrink: 0; white-space: nowrap;
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase;
+    padding: .1rem .35rem; flex-shrink: 0; white-space: nowrap;
   }
-  .flag.loud .tag { background: var(--accent); color: #1a1205; font-weight: 600; }
+  .flag.loud .tag { background: var(--accent); color: var(--panel); font-weight: 600; }
   .flag.loud .msg { color: var(--ink); }
-  .flag.quiet .tag { border: 1px solid var(--rule); color: var(--ink-faint); }
-  .flag.quiet .msg { color: var(--ink-faint); }
+  .flag.quiet .tag { border: 1px solid var(--rule2); color: var(--dim); }
+  .flag.quiet .msg { color: var(--dim); }
 
   .tally { font-family: var(--mono); font-size: 11px; }
   .tally.pass { color: var(--good); }
@@ -299,7 +354,8 @@
 <body>
 
 <header>
-  <h1><span class="mark">◵</span> Gnomon</h1>
+  <h1>Gnomon</h1>
+  <span class="divider"></span>
   <span class="tagline">sun direction from shadow geometry</span>
   <span class="spacer"></span>
   <span class="hint">` debug</span>
@@ -309,7 +365,7 @@
   <section id="region-canvas">
     <div class="region-label">Image</div>
     <div class="mark-toolbar" id="mark-toolbar">
-      <button id="mode-object" aria-pressed="true"><span class="swatch" style="background:var(--ray)"></span>Objects</button>
+      <button id="mode-object" aria-pressed="true">Objects</button>
       <button id="mode-reference">Reference direction</button>
       <button id="mode-rectangle">Scene rectangle</button>
       <button id="undo-mark">Undo</button>
@@ -377,9 +433,7 @@
       <div id="object-list"><p class="note">None yet. Three clicks each: base, top, shadow tip.</p></div>
       <div class="reading" style="margin-top:.45rem">
         <span class="k">Reference bearing</span>
-        <span class="v"><input type="number" id="in-bearing" value="0" step="1" min="0" max="360"
-          style="width:5rem;background:var(--raised);border:1px solid var(--rule);color:var(--ink);
-                 padding:.1rem .3rem;font-size:11.5px;border-radius:2px" disabled></span>
+        <span class="v"><input type="number" id="in-bearing" value="0" step="1" min="0" max="360" disabled></span>
       </div>
       <p class="note" id="bearing-note">Mark a reference direction to report azimuth against north.</p>
     </div>
@@ -407,9 +461,11 @@
       </div>
       <div class="result-main">
         <div class="mode-tabs">
-          <button id="tab-verify" aria-pressed="false">Verify</button>
-          <button id="tab-time" aria-pressed="false">Time</button>
-          <button id="tab-locate" aria-pressed="true">Locate</button>
+          <span class="seg">
+            <button id="tab-verify" aria-pressed="false">Verify</button>
+            <button id="tab-time" aria-pressed="false">Time</button>
+            <button id="tab-locate" aria-pressed="true">Locate</button>
+          </span>
           <span class="mode-hint" id="mode-hint"></span>
         </div>
         <div class="result-body">
@@ -2812,8 +2868,8 @@ var Gnomon = (function () {
 
       return '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">' +
         "<title>Gnomon report</title><style>" +
-        ":root{--ink:#1b1f24;--dim:#5c6570;--faint:#8a939d;--rule:#d8dde3;--accent:#a86a12;" +
-        "--bad:#a33527;--good:#2f6b40;--mono:ui-monospace,Menlo,Consolas,monospace}" +
+        ":root{--ink:#1A1D1C;--dim:#6C716E;--faint:#9AA09C;--rule:#DAD8D2;--accent:#C4531D;" +
+        "--bad:#A33527;--good:#2F6B40;--mono:ui-monospace,Menlo,Consolas,monospace}" +
         "body{max-width:52rem;margin:2.5rem auto;padding:0 1.5rem;background:#fff;color:var(--ink);" +
         "font:14px/1.6 system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif}" +
         "h1{font-size:17px;letter-spacing:.13em;text-transform:uppercase;margin:0 0 .2rem}" +
@@ -3063,6 +3119,18 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
    ───────────────────────────────────────────────────────────────────────── */
 (function () {
   "use strict";
+
+  /* Canvas code reads the design tokens at draw time, so a change of colour
+     scheme is a redraw, not a reload. */
+  function themeToken(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function accentRGB() {
+    const hex = themeToken("--accent").replace("#", "");
+    const full = hex.length === 3 ? hex.replace(/./g, function (c) { return c + c; }) : hex;
+    const n = parseInt(full, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
 
   const DEBUG_KEY = "`";
   const panel = document.getElementById("debug-panel");
@@ -3524,44 +3592,63 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     }
   }
 
-  function drawLine(ctx, a, b, colour, width) {
+  function drawLine(ctx, a, b, colour, width, dash, alpha) {
+    ctx.save();
     ctx.strokeStyle = colour;
     ctx.lineWidth = width;
-    ctx.setLineDash([]);
+    ctx.setLineDash(dash || []);
+    if (alpha !== undefined) ctx.globalAlpha = alpha;
     ctx.beginPath();
     ctx.moveTo(a[0], a[1]);
     ctx.lineTo(b[0], b[1]);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /* Construction lines ride on a soft white halo — the design source's answer
+     to drawing hairlines over a photograph of arbitrary content. */
+  function drawHalo(ctx, a, b, width) {
+    drawLine(ctx, a, b, "#ffffff", width, [], 0.55);
   }
 
   /* The dashed extensions are what let a user see whether the lines actually
      agree before trusting any number derived from them — so they are drawn long
      enough to reach off-canvas, and they are drawn for near-parallel families
-     too, where the convergence point is at infinity. */
-  function drawExtension(ctx, from, other, vp, colour, reach) {
+     too, where the convergence point is at infinity. They carry their family's
+     own dash pattern at lower weight, so an extension still says which family
+     it extends. */
+  function drawExtension(ctx, from, other, vp, colour, reach, dash, width) {
     const dir = Gnomon.geom.extensionDirection(from, other, vp);
     if (!dir) return;
-    ctx.save();
-    ctx.strokeStyle = colour;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([6, 7]);
-    ctx.beginPath();
-    ctx.moveTo(from[0], from[1]);
-    ctx.lineTo(from[0] + dir[0] * reach, from[1] + dir[1] * reach);
-    ctx.stroke();
-    ctx.restore();
+    drawLine(ctx, from, [from[0] + dir[0] * reach, from[1] + dir[1] * reach],
+      colour, width, dash, 0.45);
   }
 
-  function drawHandle(ctx, point, colour, filled) {
+  /* Marks carry their meaning in their shape — square base, circle top, diamond
+     shadow tip — because the lines own the dash patterns and the accent is
+     reserved for the object being placed. */
+  function drawHandle(ctx, point, colour, shape, u) {
+    const r = 4.6 * u;
     ctx.save();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = colour;
-    ctx.fillStyle = filled ? colour : "rgba(16,18,21,.72)";
-    ctx.beginPath();
-    ctx.arc(point[0], point[1], 5.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const pass of [["#ffffff", 3.4 * u, 0.55], [colour, 1.4 * u, 1]]) {
+      ctx.strokeStyle = pass[0];
+      ctx.lineWidth = pass[1];
+      ctx.globalAlpha = pass[2];
+      ctx.beginPath();
+      if (shape === "square") {
+        ctx.rect(point[0] - r, point[1] - r, r * 2, r * 2);
+      } else if (shape === "diamond") {
+        ctx.moveTo(point[0], point[1] - r * 1.2);
+        ctx.lineTo(point[0] + r * 1.2, point[1]);
+        ctx.lineTo(point[0], point[1] + r * 1.2);
+        ctx.lineTo(point[0] - r * 1.2, point[1]);
+        ctx.closePath();
+      } else {
+        ctx.arc(point[0], point[1], r, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -3571,58 +3658,69 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
     ctx.drawImage(state.baseCanvas, 0, 0);
 
-    const styles = getComputedStyle(document.documentElement);
-    const colour = {
-      vertical: styles.getPropertyValue("--vertical").trim(),
-      shadow: styles.getPropertyValue("--shadow-line").trim(),
-      ray: styles.getPropertyValue("--ray").trim(),
-    };
+    const ink = themeToken("--ink");
+    const dim = themeToken("--dim");
+    const accent = themeToken("--accent");
+    /* Stroke work scales with the image, so a 4000-pixel photograph and an
+       800-pixel screenshot carry the same apparent line weight on screen. */
+    const u = Math.max(1, Math.hypot(imageCanvas.width, imageCanvas.height) / 1400);
+    /* One ink, three dash patterns — the design source's construction language.
+       Solid verticals, dashed shadows, dotted light rays. Colour does not
+       distinguish families; the accent means "being placed now". */
+    const DASH = { vertical: [], shadow: [7 * u, 4 * u], ray: [1.8 * u, 4.2 * u] };
     const reach = Math.hypot(imageCanvas.width, imageCanvas.height) * 1.6;
     const vps = currentFamilies();
 
     for (const obj of state.objects) {
       if (vps) {
-        drawExtension(ctx, obj.top, obj.base, vps.z.v, colour.vertical, reach);
-        drawExtension(ctx, obj.base, obj.top, vps.z.v, colour.vertical, reach);
-        drawExtension(ctx, obj.tip, obj.base, vps.shadow.v, colour.shadow, reach);
-        drawExtension(ctx, obj.tip, obj.top, vps.sun.v, colour.ray, reach);
+        drawExtension(ctx, obj.top, obj.base, vps.z.v, ink, reach, DASH.vertical, u);
+        drawExtension(ctx, obj.base, obj.top, vps.z.v, ink, reach, DASH.vertical, u);
+        drawExtension(ctx, obj.tip, obj.base, vps.shadow.v, ink, reach, DASH.shadow, u);
+        drawExtension(ctx, obj.tip, obj.top, vps.sun.v, ink, reach, DASH.ray, u);
       }
-      drawLine(ctx, obj.base, obj.top, colour.vertical, 2.5);
-      drawLine(ctx, obj.base, obj.tip, colour.shadow, 2.5);
-      drawLine(ctx, obj.top, obj.tip, colour.ray, 2);
+      drawHalo(ctx, obj.base, obj.top, 3.4 * u);
+      drawHalo(ctx, obj.base, obj.tip, 3.4 * u);
+      drawHalo(ctx, obj.top, obj.tip, 3.4 * u);
+      drawLine(ctx, obj.base, obj.top, ink, 1.5 * u, DASH.vertical);
+      drawLine(ctx, obj.base, obj.tip, ink, 1.5 * u, DASH.shadow);
+      drawLine(ctx, obj.top, obj.tip, ink, 1.3 * u, DASH.ray);
     }
     for (const obj of state.objects) {
-      drawHandle(ctx, obj.base, colour.vertical, true);
-      drawHandle(ctx, obj.top, colour.vertical, false);
-      drawHandle(ctx, obj.tip, colour.ray, false);
+      drawHandle(ctx, obj.base, ink, "square", u);
+      drawHandle(ctx, obj.top, ink, "circle", u);
+      drawHandle(ctx, obj.tip, ink, "diamond", u);
     }
 
     // The object being placed right now, drawn the same way so a half-finished
-    // object looks like an object rather than like an error.
-    if (state.pending.base && state.pending.top) drawLine(ctx, state.pending.base, state.pending.top, colour.vertical, 2.5);
+    // object looks like an object rather than like an error — in accent,
+    // because "current measurement" is the accent's one job on this canvas.
+    if (state.pending.base && state.pending.top) {
+      drawHalo(ctx, state.pending.base, state.pending.top, 3.4 * u);
+      drawLine(ctx, state.pending.base, state.pending.top, accent, 1.5 * u, DASH.vertical);
+    }
+    const PENDING_SHAPE = { base: "square", top: "circle", tip: "diamond" };
     for (const key of MARK_ORDER) {
-      if (state.pending[key]) drawHandle(ctx, state.pending[key], colour.ray, key === "base");
+      if (state.pending[key]) drawHandle(ctx, state.pending[key], accent, PENDING_SHAPE[key], u);
     }
 
-    if (state.reference && state.reference.length === 2) {
-      ctx.save();
-      ctx.setLineDash([2, 4]);
-      drawLine(ctx, state.reference[0], state.reference[1], "#d6dae0", 2);
-      ctx.restore();
-      state.reference.forEach(function (p) { drawHandle(ctx, p, "#d6dae0", false); });
-    } else if (state.reference) {
-      state.reference.forEach(function (p) { drawHandle(ctx, p, "#d6dae0", false); });
+    if (state.reference) {
+      if (state.reference.length === 2) {
+        drawHalo(ctx, state.reference[0], state.reference[1], 3.4 * u);
+        drawLine(ctx, state.reference[0], state.reference[1], ink, 1.3 * u, [2 * u, 4 * u]);
+      }
+      state.reference.forEach(function (p) { drawHandle(ctx, p, ink, "circle", u); });
     }
 
     if (state.rectangle.length) {
-      ctx.save();
-      ctx.setLineDash([3, 3]);
       for (let i = 0; i + 1 < state.rectangle.length; i++) {
-        drawLine(ctx, state.rectangle[i], state.rectangle[i + 1], "#b58ad6", 1.5);
+        drawHalo(ctx, state.rectangle[i], state.rectangle[i + 1], 3 * u);
+        drawLine(ctx, state.rectangle[i], state.rectangle[i + 1], dim, 1.2 * u, [3 * u, 3 * u]);
       }
-      if (state.rectangle.length === 4) drawLine(ctx, state.rectangle[3], state.rectangle[0], "#b58ad6", 1.5);
-      ctx.restore();
-      state.rectangle.forEach(function (p) { drawHandle(ctx, p, "#b58ad6", false); });
+      if (state.rectangle.length === 4) {
+        drawHalo(ctx, state.rectangle[3], state.rectangle[0], 3 * u);
+        drawLine(ctx, state.rectangle[3], state.rectangle[0], dim, 1.2 * u, [3 * u, 3 * u]);
+      }
+      state.rectangle.forEach(function (p) { drawHandle(ctx, p, dim, "square", u); });
     }
   }
 
@@ -3632,7 +3730,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     const ctx = loupeCanvas.getContext("2d");
     const span = SIZE / ZOOM;
 
-    ctx.fillStyle = "#16191d";
+    ctx.fillStyle = themeToken("--sunk");
     ctx.fillRect(0, 0, SIZE, SIZE);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(
@@ -3643,7 +3741,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     // Crosshair, so the loupe shows exactly which pixel is being placed rather
     // than just a bigger blur.
-    ctx.strokeStyle = "rgba(224,164,76,.95)";
+    ctx.strokeStyle = themeToken("--accent");
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(SIZE / 2, 0); ctx.lineTo(SIZE / 2, SIZE / 2 - 7);
@@ -4156,8 +4254,10 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     const layerCtx = bandLayer.getContext("2d");
     const image = layerCtx.createImageData(mapSize, mapSize);
     const data = image.data;
-    // The accent, as the band colour.
-    const R = 224, G = 164, B = 76;
+    // The accent, as the band colour — read from the tokens so it follows the
+    // colour scheme.
+    const rgb = accentRGB();
+    const R = rgb[0], G = rgb[1], B = rgb[2];
 
     for (let py = 0; py < mapSize; py++) {
       for (let px = 0; px < mapSize; px++) {
@@ -4184,25 +4284,27 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     ctx.clearRect(0, 0, mapSize, mapSize);
 
-    // The globe itself.
+    // The globe itself — the sea is a panel surface, per the design source.
     ctx.beginPath();
     ctx.arc(mapSize / 2, mapSize / 2, mapSize / 2 - 6, 0, Math.PI * 2);
-    ctx.fillStyle = "#0d1116";
+    ctx.fillStyle = themeToken("--panel");
     ctx.fill();
 
     const path = window.d3.geoPath(projection, ctx);
 
     /* Land needs enough contrast against the ocean to actually orient the
        reader — the coastlines are what turn a coloured arc into "somewhere in
-       the Tasman Sea". A first pass drew them at #242b32 on #12161b and they
-       were invisible, which made the globe decorative rather than useful. */
+       the Tasman Sea". A first pass drew them nearly tone-on-tone and they
+       were invisible, which made the globe decorative rather than useful. The
+       --land/--coast pair from the design source keeps that contrast in both
+       colour schemes. */
     if (land) {
       ctx.beginPath();
       path(land);
-      ctx.fillStyle = "#333e49";
+      ctx.fillStyle = themeToken("--land");
       ctx.fill();
       ctx.lineWidth = 0.6;
-      ctx.strokeStyle = "#5d6b78";
+      ctx.strokeStyle = themeToken("--coast");
       ctx.stroke();
     }
 
@@ -4212,8 +4314,8 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     if (window.d3.geoGraticule) {
       ctx.beginPath();
       path(window.d3.geoGraticule().step([30, 30])());
-      ctx.lineWidth = 0.4;
-      ctx.strokeStyle = "rgba(139,147,157,.28)";
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = themeToken("--rule");
       ctx.stroke();
     }
 
@@ -4228,7 +4330,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
       if (visible) {
         ctx.beginPath();
         ctx.arc(projected[0], projected[1], 4, 0, Math.PI * 2);
-        ctx.strokeStyle = "#d6dae0";
+        ctx.strokeStyle = themeToken("--ink");
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -4236,7 +4338,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     ctx.beginPath();
     ctx.arc(mapSize / 2, mapSize / 2, mapSize / 2 - 6, 0, Math.PI * 2);
-    ctx.strokeStyle = "#2a2f36";
+    ctx.strokeStyle = themeToken("--rule2");
     ctx.lineWidth = 1;
     ctx.stroke();
 
@@ -4506,7 +4608,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
         return w.start + " – " + w.end + '  <span class="peak">best ' + w.peak + "</span>";
       }).join("<br>") +
       (result.ambiguous
-        ? '<br><span style="color:var(--ink-faint)">Two windows: the sun passes any given elevation ' +
+        ? '<br><span style="color:var(--faint)">Two windows: the sun passes any given elevation ' +
           "twice a day. A reference bearing resolves which side of noon.</span>"
         : "");
     }
@@ -4520,40 +4622,53 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
 
     ctx.clearRect(0, 0, w, h);
 
+    const accent = themeToken("--accent");
+    const a = accentRGB();
+
     // Hour rules, so a window can be read off the axis rather than guessed.
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = "10px " + themeToken("--mono");
     for (let hour = 0; hour <= 24; hour += 3) {
       const x = (hour / 24) * w;
-      ctx.strokeStyle = "rgba(90,99,109,.35)";
+      ctx.strokeStyle = themeToken("--rule");
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x + 0.5, plotTop);
       ctx.lineTo(x + 0.5, plotBottom);
       ctx.stroke();
-      ctx.fillStyle = "#5b636d";
+      ctx.fillStyle = themeToken("--faint");
       ctx.textAlign = hour === 0 ? "left" : hour === 24 ? "right" : "center";
       ctx.fillText(String(hour).padStart(2, "0") + ":00", x, h - 6);
     }
 
-    // The fit curve across the day.
+    // The fit curve across the day — a background reference, drawn in the
+    // rule tone; the accent belongs to the windows.
     ctx.beginPath();
     result.samples.forEach(function (s, i) {
       const x = (s.minutes / 1440) * w;
       const y = plotBottom - s.fit * (plotBottom - plotTop);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = "#8b939d";
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = themeToken("--rule2");
+    ctx.lineWidth = 1.2;
     ctx.stroke();
 
-    // The windows themselves, filled.
+    // The windows themselves: a translucent accent span with hairline accent
+    // edges, so the band reads as a band and its bounds are still exact.
     for (const win of result.windows) {
       const x0 = (win.startMinutes / 1440) * w;
       const x1 = (win.endMinutes / 1440) * w;
-      ctx.fillStyle = "rgba(224,164,76,.28)";
+      ctx.fillStyle = "rgba(" + a[0] + "," + a[1] + "," + a[2] + ",.18)";
       ctx.fillRect(x0, plotTop, Math.max(1.5, x1 - x0), plotBottom - plotTop);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 0.5, plotTop);
+      ctx.lineTo(x0 + 0.5, plotBottom);
+      ctx.moveTo(x1 - 0.5, plotTop);
+      ctx.lineTo(x1 - 0.5, plotBottom);
+      ctx.stroke();
       const px = (win.peakMinutes / 1440) * w;
-      ctx.strokeStyle = "#e0a44c";
+      ctx.strokeStyle = accent;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(px, plotTop);
@@ -4564,7 +4679,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
     // The claimed time, for comparison against the windows.
     if (args && Number.isFinite(args.minutes)) {
       const cx = (args.minutes / 1440) * w;
-      ctx.strokeStyle = "#d6dae0";
+      ctx.strokeStyle = themeToken("--ink");
       ctx.setLineDash([3, 3]);
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -4574,7 +4689,7 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
       ctx.setLineDash([]);
     }
 
-    ctx.strokeStyle = "#2a2f36";
+    ctx.strokeStyle = themeToken("--rule");
     ctx.strokeRect(0.5, plotTop + 0.5, w - 1, plotBottom - plotTop);
   }
 
@@ -4772,6 +4887,17 @@ if (typeof globalThis !== "undefined") globalThis.Gnomon = Gnomon;
   Gnomon.debug.set("session", "core version", Gnomon.version);
   renderSolar();
   renderDebug();
+
+  /* The canvases read their colours at draw time, so following an OS colour-
+     scheme change is a redraw, not a reload. */
+  const scheme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+  if (scheme && scheme.addEventListener) {
+    scheme.addEventListener("change", function () {
+      redraw();
+      drawMap();
+      renderResult();
+    });
+  }
 })();
 </script>
 

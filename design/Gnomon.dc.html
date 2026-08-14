@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<script src="./image-slot.js"></script>
+<style>
+  :root{
+    --paper:#F6F5F2; --panel:#FFFFFF; --sunk:#EFEEEA; --ink:#1A1D1C; --dim:#6C716E;
+    --faint:#9AA09C; --rule:#DAD8D2; --rule2:#C2BFB7; --accent:#C4531D;
+  }
+  :root[data-theme="dark"]{
+    --paper:#131516; --panel:#191C1D; --sunk:#101213; --ink:#E9EAE7; --dim:#8E9491;
+    --faint:#6A706D; --rule:#2C3032; --rule2:#3C4144; --accent:#E0703A;
+  }
+  html,body{margin:0;background:var(--paper);color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased;text-wrap:pretty}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--rule2)}
+  a:hover{border-bottom-color:var(--accent)}
+  button{font:inherit;color:inherit}
+</style>
+</helmet>
+
+<section style="display:flex;flex-direction:column;gap:38px;padding:44px 48px 90px;background:var(--paper)">
+
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:40px;border-bottom:1px solid var(--rule2);padding-bottom:18px;max-width:1240px">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;letter-spacing:.30em;font-weight:500">GNOMON</div>
+      <div style="font-size:13px;color:var(--dim);max-width:560px">Shadow-geometry instrument. Design board — working view, result regions, components, and degraded states. Every reading is a range; nothing here claims more precision than the geometry supports.</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">appearance</span>
+      <button onClick="{{ toggleTheme }}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;background:var(--panel);border:1px solid var(--rule2);padding:7px 13px;cursor:pointer">light / dark</button>
+    </div>
+  </div>
+
+  <!-- ============ 1a ============ -->
+  <div id="1a" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1a</span>
+      <span style="font-size:13px;font-weight:500">Working view · photo loaded, nothing marked</span>
+      <span style="font-size:12px;color:var(--dim)">The readout exists before there is anything to read. Dashes, not zeros.</span>
+    </div>
+    <div style="width:1240px;background:var(--panel);border:1px solid var(--rule)">
+      <div style="display:flex;align-items:center;justify-content:space-between;height:46px;padding:0 18px;border-bottom:1px solid var(--rule)">
+        <div style="display:flex;align-items:center;gap:16px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.26em;font-weight:500">GNOMON</span>
+          <span style="width:1px;height:16px;background:var(--rule)"></span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)">IMG_4471.JPG · 4032 × 3024 · loaded locally</span>
+        </div>
+        <div style="display:flex;border:1px solid var(--rule2)">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;background:var(--ink);color:var(--panel)">VERIFY</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim);border-left:1px solid var(--rule2)">TIME</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim);border-left:1px solid var(--rule2)">LOCATE</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">calibration</span>
+          <span style="display:flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T3</span>
+            <span style="display:flex;gap:2px">
+              <span style="width:5px;height:9px;background:var(--ink)"></span>
+              <span style="width:5px;height:9px;background:var(--ink)"></span>
+              <span style="width:5px;height:9px;background:var(--ink)"></span>
+              <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+              <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+            </span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">± 6 %</span>
+          </span>
+        </div>
+      </div>
+
+      <div style="display:flex">
+        <div style="flex:1;padding:20px;display:flex;flex-direction:column;gap:14px;border-right:1px solid var(--rule)">
+          <div style="position:relative;width:820px;height:560px;background:var(--sunk)">
+            <image-slot id="gn-photo-a" shape="rect" placeholder="Drop the outdoor photo here — vertical objects, visible shadows"></image-slot>
+            <svg viewBox="0 0 820 560" style="position:absolute;inset:0;width:820px;height:560px;pointer-events:none">
+              <g stroke="var(--rule2)" stroke-width="1" opacity="0.9">
+                <path d="M24,24 h26 M24,24 v26 M796,24 h-26 M796,24 v26 M24,536 h26 M24,536 v-26 M796,536 h-26 M796,536 v-26"></path>
+              </g>
+            </svg>
+            <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:9px;background:color-mix(in srgb, var(--panel) 88%, transparent);border:1px solid var(--rule2);padding:16px 22px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">mark object 01</span>
+              <span style="font-size:12.5px;color:var(--ink)">Three clicks: base of a vertical thing, its top, the tip of its shadow.</span>
+              <span style="font-size:11.5px;color:var(--dim)">Two objects minimum. One gives azimuth only.</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:26px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">construction</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4"></path></svg>verticals</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="5 3"></path></svg>shadows</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="1.5 3.5"></path></svg>light rays</span>
+          </div>
+        </div>
+
+        <div style="width:380px;display:flex;flex-direction:column">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">readout</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)">awaiting geometry</span>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:24px">
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;color:var(--faint)">—</span>
+              <div style="position:relative;height:20px">
+                <div style="position:absolute;left:0;right:0;top:9px;height:1px;background:repeating-linear-gradient(90deg,var(--rule) 0 3px,transparent 3px 6px)"></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar azimuth</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;color:var(--faint)">—</span>
+              <div style="position:relative;height:20px">
+                <div style="position:absolute;left:0;right:0;top:9px;height:1px;background:repeating-linear-gradient(90deg,var(--rule) 0 3px,transparent 3px 6px)"></div>
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">validity residual</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:22px;color:var(--faint)">—</span>
+              <span style="font-size:11.5px;color:var(--dim)">Needs two objects. The residual is the disagreement between them; it is the only number here that judges the others.</span>
+            </div>
+            <div style="border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:11px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">supplied</span>
+              <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">site</span><span style="font-family:'IBM Plex Mono',monospace">48.8566 N &nbsp;2.3522 E</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">claimed time</span><span style="font-family:'IBM Plex Mono',monospace">2026-03-14 &nbsp;09:40 +01</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">focal length</span><span style="font-family:'IBM Plex Mono',monospace">27.1 mm &nbsp;self-cal</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--rule);padding:18px 20px;display:flex;align-items:center;justify-content:space-between;background:var(--sunk)">
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">result · verify</span>
+          <span style="font-size:12.5px;color:var(--dim)">A verdict appears once two objects are marked. It will compare the observed shadow bearing against the bearing the claimed time and place require.</span>
+        </div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;color:var(--faint)">0 / 2 OBJECTS</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1b ============ -->
+  <div id="1b" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1b</span>
+      <span style="font-size:13px;font-weight:500">Working view · one object placed, second mid-marking</span>
+      <span style="font-size:12px;color:var(--dim)">Accent marks the point being dragged. Loupe follows the cursor; the third click is still missing.</span>
+    </div>
+    <div style="width:1240px;background:var(--panel);border:1px solid var(--rule)">
+      <div style="display:flex;align-items:center;justify-content:space-between;height:46px;padding:0 18px;border-bottom:1px solid var(--rule)">
+        <div style="display:flex;align-items:center;gap:16px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.26em;font-weight:500">GNOMON</span>
+          <span style="width:1px;height:16px;background:var(--rule)"></span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)">IMG_4471.JPG · dragging OBJ 02 · TOP</span>
+        </div>
+        <div style="display:flex;border:1px solid var(--rule2)">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;background:var(--ink);color:var(--panel)">VERIFY</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim);border-left:1px solid var(--rule2)">TIME</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim);border-left:1px solid var(--rule2)">LOCATE</span>
+        </div>
+        <span style="display:flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T3</span>
+          <span style="display:flex;gap:2px">
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+            <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+          </span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">± 6 %</span>
+        </span>
+      </div>
+
+      <div style="display:flex">
+        <div style="flex:1;padding:20px;display:flex;flex-direction:column;gap:14px;border-right:1px solid var(--rule)">
+          <div style="position:relative;width:820px;height:560px;background:var(--sunk)">
+            <image-slot id="gn-photo-b" shape="rect" placeholder="Drop the same photo here"></image-slot>
+            <svg viewBox="0 0 820 560" style="position:absolute;inset:0;width:820px;height:560px;pointer-events:none">
+              <g stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="3" fill="none">
+                <path d="M301.9,560 L327.4,0"></path>
+                <path d="M0,420 L820,554.1"></path>
+                <path d="M116,0 L564,560"></path>
+              </g>
+              <path d="M301.9,560 L327.4,0" stroke="var(--ink)" stroke-width="1.2" fill="none"></path>
+              <path d="M0,420 L820,554.1" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="5 3" fill="none"></path>
+              <path d="M116,0 L564,560" stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="1.5 3.5" fill="none"></path>
+              <g fill="none" stroke="var(--ink)" stroke-width="1.4">
+                <rect x="301" y="465" width="10" height="10"></rect>
+                <circle cx="316" cy="250" r="5"></circle>
+                <path d="M520,498 l7,7 -7,7 -7,-7 z"></path>
+              </g>
+              <g stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="3" fill="none"><path d="M630,560 L595.5,0"></path></g>
+              <path d="M630,560 L595.5,0" stroke="var(--accent)" stroke-width="1.4" fill="none" stroke-opacity="0.9"></path>
+              <g fill="none" stroke="var(--accent)" stroke-width="1.6">
+                <rect x="617" y="425" width="10" height="10"></rect>
+                <circle cx="614" cy="300" r="5"></circle>
+              </g>
+              <text x="336" y="243" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">OBJ 01</text>
+              <text x="632" y="294" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--accent)">OBJ 02 · 2 / 3</text>
+            </svg>
+            <div style="position:absolute;left:462px;top:112px;width:150px;height:150px;border:1px solid var(--accent);border-radius:50%;overflow:hidden;background:var(--sunk);box-shadow:0 2px 14px rgba(0,0,0,.18)">
+              <div style="position:absolute;left:0;top:0;width:150px;height:150px;background:radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--ink) 10%, transparent), transparent 70%)"></div>
+              <svg viewBox="0 0 150 150" style="position:absolute;inset:0;width:150px;height:150px">
+                <path d="M75,0 v62 M75,88 v62 M0,75 h62 M88,75 h62" stroke="var(--accent)" stroke-width="0.8" opacity="0.7"></path>
+                <circle cx="75" cy="75" r="5" fill="none" stroke="var(--accent)" stroke-width="1.2"></circle>
+                <path d="M65,150 L82,0" stroke="var(--accent)" stroke-width="1.2" opacity="0.5"></path>
+              </svg>
+              <span style="position:absolute;left:0;right:0;bottom:8px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.1em;color:var(--accent)">8 × · 614.2, 300.4</span>
+            </div>
+            <div style="position:absolute;left:14px;bottom:14px;display:flex;flex-direction:column;gap:4px;background:color-mix(in srgb, var(--panel) 88%, transparent);border:1px solid var(--rule2);padding:9px 12px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">next click</span>
+              <span style="font-size:12px">Tip of OBJ 02's shadow.</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:26px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">construction</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4"></path></svg>verticals</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="5 3"></path></svg>shadows</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="1.5 3.5"></path></svg>light rays</span>
+            <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--accent)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--accent)" stroke-width="1.6"></path></svg>current measurement</span>
+          </div>
+        </div>
+
+        <div style="width:380px;display:flex;flex-direction:column">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">readout</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--accent)">1 OBJECT · PARTIAL</span>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:22px">
+            <div style="border:1px solid var(--rule2);padding:13px 14px;display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">partial capability</span>
+              <span style="font-size:12.5px">One object fixes the direction of the light in the image, so azimuth is available. Elevation needs a second object to cross-check the vertical scale — and so does the residual.</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar azimuth</span>
+              <div style="display:flex;align-items:baseline;gap:9px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;font-variant-numeric:tabular-nums">118.6°</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">+5.1 / −4.4</span>
+              </div>
+              <div style="position:relative;height:22px">
+                <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:44%;width:16%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 18%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+                <div style="position:absolute;left:51%;top:1px;width:1px;height:19px;background:var(--ink)"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>114.2 — 123.7</span><span>360°</span></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:7px;opacity:0.55">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation · withheld</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;color:var(--faint)">—</span>
+              <div style="position:relative;height:20px">
+                <div style="position:absolute;left:0;right:0;top:5px;height:11px;background:repeating-linear-gradient(45deg,var(--rule) 0 1px,transparent 1px 5px);border-left:1px solid var(--rule2);border-right:1px solid var(--rule2)"></div>
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:10px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">objects</span>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px"><span>OBJ 01</span><span style="color:var(--dim)">3 / 3 · ratio 1.474</span></div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent)"><span>OBJ 02</span><span>2 / 3 · shadow tip pending</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--rule);padding:18px 20px;display:flex;align-items:center;justify-content:space-between;background:var(--sunk)">
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">result · verify · azimuth only</span>
+          <span style="font-size:12.5px">The claimed time implies a shadow bearing <span style="font-family:'IBM Plex Mono',monospace">47°</span> from the one observed. Marking a second object will decide whether that gap survives the elevation check.</span>
+        </div>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;color:var(--dim)">1 / 2 OBJECTS</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1c ============ -->
+  <div id="1c" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1c</span>
+      <span style="font-size:13px;font-weight:500">Working view · solved, Locate mode</span>
+      <span style="font-size:12px;color:var(--dim)">All three families extended to their off-frame convergence points; edge markers say how far off-frame each sits.</span>
+    </div>
+    <div style="width:1240px;background:var(--panel);border:1px solid var(--rule)">
+      <div style="display:flex;align-items:center;justify-content:space-between;height:46px;padding:0 18px;border-bottom:1px solid var(--rule)">
+        <div style="display:flex;align-items:center;gap:16px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.26em;font-weight:500">GNOMON</span>
+          <span style="width:1px;height:16px;background:var(--rule)"></span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)">IMG_4471.JPG · 2 objects · solved</span>
+        </div>
+        <div style="display:flex;border:1px solid var(--rule2)">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim)">VERIFY</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;color:var(--dim);border-left:1px solid var(--rule2)">TIME</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.14em;padding:6px 14px;background:var(--ink);color:var(--panel);border-left:1px solid var(--rule2)">LOCATE</span>
+        </div>
+        <span style="display:flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T3</span>
+          <span style="display:flex;gap:2px">
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;background:var(--ink)"></span>
+            <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+            <span style="width:5px;height:9px;border:1px solid var(--rule2)"></span>
+          </span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">± 6 %</span>
+        </span>
+      </div>
+
+      <div style="display:flex">
+        <div style="flex:1;padding:20px;display:flex;flex-direction:column;gap:14px;border-right:1px solid var(--rule)">
+          <div style="position:relative;width:820px;height:560px;background:var(--sunk)">
+            <image-slot id="gn-photo-c" shape="rect" placeholder="Drop the same photo here"></image-slot>
+            <svg viewBox="0 0 820 560" style="position:absolute;inset:0;width:820px;height:560px;pointer-events:none">
+              <g stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="3" fill="none">
+                <path d="M301.9,560 L327.4,0"></path>
+                <path d="M630,560 L595.5,0"></path>
+                <path d="M0,420 L820,554.1"></path>
+                <path d="M0,316 L820,466.3"></path>
+                <path d="M116,0 L564,560"></path>
+                <path d="M361.3,0 L820,544.6"></path>
+              </g>
+              <g stroke="var(--ink)" stroke-width="1.2" fill="none">
+                <path d="M301.9,560 L327.4,0"></path>
+                <path d="M630,560 L595.5,0"></path>
+              </g>
+              <g stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="5 3" fill="none">
+                <path d="M0,420 L820,554.1"></path>
+                <path d="M0,316 L820,466.3"></path>
+              </g>
+              <g stroke="var(--ink)" stroke-width="1.2" stroke-dasharray="1.5 3.5" fill="none" stroke-opacity="0.75">
+                <path d="M116,0 L564,560"></path>
+                <path d="M361.3,0 L820,544.6"></path>
+              </g>
+              <g fill="none" stroke="var(--ink)" stroke-width="1.4">
+                <rect x="301" y="465" width="10" height="10"></rect>
+                <circle cx="316" cy="250" r="5"></circle>
+                <path d="M520,498 l7,7 -7,7 -7,-7 z"></path>
+                <rect x="617" y="425" width="10" height="10"></rect>
+                <circle cx="614" cy="300" r="5"></circle>
+                <path d="M742,445 l7,7 -7,7 -7,-7 z"></path>
+              </g>
+              <text x="336" y="243" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">OBJ 01</text>
+              <text x="632" y="294" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">OBJ 02</text>
+            </svg>
+            <div style="position:absolute;left:392px;top:10px;display:flex;align-items:center;gap:7px;background:color-mix(in srgb, var(--panel) 90%, transparent);border:1px solid var(--rule2);padding:4px 8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink)">▲</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:var(--dim)">VERT V.P. · 4.5 frames above</span>
+            </div>
+            <div style="position:absolute;left:56px;top:10px;display:flex;align-items:center;gap:7px;background:color-mix(in srgb, var(--panel) 90%, transparent);border:1px solid var(--rule2);padding:4px 8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink)">◤</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:var(--dim)">SUN V.P. · 9.4 frames up-left</span>
+            </div>
+            <div style="position:absolute;right:10px;top:342px;display:flex;align-items:center;gap:7px;background:color-mix(in srgb, var(--panel) 90%, transparent);border:1px solid var(--rule2);padding:4px 8px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.08em;color:var(--dim)">SHADOW V.P. · 5.4 frames right</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--ink)">▶</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;align-items:center;gap:26px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">construction</span>
+              <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4"></path></svg>verticals</span>
+              <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="5 3"></path></svg>shadows</span>
+              <span style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><svg width="34" height="8"><path d="M0,4 H34" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="1.5 3.5"></path></svg>light rays</span>
+            </div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">drag any point · everything recomputes</span>
+          </div>
+        </div>
+
+        <div style="width:380px;display:flex;flex-direction:column">
+          <div style="padding:16px 20px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">readout</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">2 OBJECTS · CONSISTENT</span>
+          </div>
+          <div style="padding:20px;display:flex;flex-direction:column;gap:22px">
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation</span>
+              <div style="display:flex;align-items:baseline;gap:9px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;font-variant-numeric:tabular-nums">34.2°</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">± 1.8</span>
+              </div>
+              <div style="position:relative;height:22px">
+                <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:36%;width:4%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 20%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+                <div style="position:absolute;left:38%;top:1px;width:1px;height:19px;background:var(--ink)"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>32.4 — 36.0</span><span>90°</span></div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:7px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar azimuth</span>
+              <div style="display:flex;align-items:baseline;gap:9px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:30px;font-variant-numeric:tabular-nums">118.6°</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">± 2.7</span>
+              </div>
+              <div style="position:relative;height:22px">
+                <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:32%;width:1.5%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 20%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+                <div style="position:absolute;left:33%;top:1px;width:1px;height:19px;background:var(--ink)"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>115.9 — 121.3</span><span>360°</span></div>
+            </div>
+
+            <div style="border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:16px 0;display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">validity residual</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:var(--dim)">2 OBJECTS · 1 D.O.F.</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:9px">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:26px">0.31°</span>
+                <span style="font-size:12px;color:var(--dim)">below the 1.0° working threshold</span>
+              </div>
+              <div style="position:relative;height:24px">
+                <div style="position:absolute;left:0;right:0;top:11px;height:1px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:25%;top:5px;width:1px;height:13px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:62%;top:5px;width:1px;height:13px;background:var(--rule2)"></div>
+                <div style="position:absolute;left:8%;top:2px;width:1px;height:19px;background:var(--ink)"></div>
+                <div style="position:absolute;left:0;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">0</div>
+                <div style="position:absolute;left:25%;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">1.0 caution</div>
+                <div style="position:absolute;left:62%;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">2.5 refuse</div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">objects</span>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px"><span>OBJ 01</span><span style="color:var(--dim)">h/s 1.474 · 3 / 3</span></div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px"><span>OBJ 02</span><span style="color:var(--dim)">h/s 1.402 · 3 / 3</span></div>
+              <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:12px"><span style="color:var(--dim)">spread</span><span>4.9 %</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--rule);display:flex">
+        <div style="width:340px;padding:18px 20px;display:flex;flex-direction:column;gap:12px;border-right:1px solid var(--rule);background:var(--sunk)">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">result · locate</span>
+          <span style="font-size:12.5px">Date is known; time is not. Every point on the band sees the sun at 34.2° at the assumed instant. Scrub the time and the band sweeps.</span>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)"><span>band area</span><span>3.1 × 10⁶ km²</span></div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)"><span>with bearing</span><span>collapses to 2 patches</span></div>
+        </div>
+        <div style="flex:1;height:330px"><iframe src="{{ mapCompact }}" title="Locate band" style="width:100%;height:100%;border:0;display:block"></iframe></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1d ============ -->
+  <div id="1d" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1d</span>
+      <span style="font-size:13px;font-weight:500">How the three modes coexist · two approaches</span>
+      <span style="font-size:12px;color:var(--dim)">Left: explicit selector (used in 1a–1c). Right: the mode falls out of what has been supplied.</span>
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap">
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:22px;display:flex;flex-direction:column;gap:18px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">A · explicit selector</span>
+        <div style="display:flex;border:1px solid var(--rule2);width:max-content">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;padding:9px 20px;background:var(--ink);color:var(--panel)">VERIFY</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;padding:9px 20px;color:var(--dim);border-left:1px solid var(--rule2)">TIME</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;padding:9px 20px;color:var(--dim);border-left:1px solid var(--rule2)">LOCATE</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;gap:14px;padding-bottom:12px;border-bottom:1px solid var(--rule)"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);width:64px">VERIFY</span><span style="font-size:12.5px;flex:1">needs place + time. Answers in prose.</span></div>
+          <div style="display:flex;gap:14px;padding-bottom:12px;border-bottom:1px solid var(--rule)"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);width:64px">TIME</span><span style="font-size:12.5px;flex:1">needs place + date. Answers on a 24-hour axis.</span></div>
+          <div style="display:flex;gap:14px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);width:64px">LOCATE</span><span style="font-size:12.5px;flex:1">needs date only. Answers on the globe.</span></div>
+        </div>
+        <span style="font-size:12px;color:var(--dim)">Predictable, and it lets a user pick a mode before supplying anything. Cost: a mode can be selected that the inputs cannot support, so the app has to explain a refusal that the user walked into.</span>
+      </div>
+
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:22px;display:flex;flex-direction:column;gap:18px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">B · emergent from inputs</span>
+        <div style="border:1px solid var(--rule2)">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--rule)">
+            <span style="font-size:12.5px">Date <span style="font-family:'IBM Plex Mono',monospace">2026-03-14</span></span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--dim)">SUPPLIED</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--rule)">
+            <span style="font-size:12.5px">Place <span style="font-family:'IBM Plex Mono',monospace">48.8566 N 2.3522 E</span></span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--dim)">SUPPLIED</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px">
+            <span style="font-size:12.5px;color:var(--dim)">Clock time</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--faint)">EMPTY</span>
+          </div>
+        </div>
+        <div style="border-left:1px solid var(--accent);padding:2px 0 2px 14px;display:flex;flex-direction:column;gap:5px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">therefore</span>
+          <span style="font-size:13px">Solving for <span style="font-family:'IBM Plex Mono',monospace">TIME</span>. Fill the clock and this becomes a verification; clear the place and it becomes a search of the globe.</span>
+        </div>
+        <span style="font-size:12px;color:var(--dim)">No mode can be chosen that the inputs cannot answer, and the ledger doubles as a statement of what the result rests on. Cost: the result region changes underfoot, so the transition has to be legible rather than surprising.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1e / 1f ============ -->
+  <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+    <div id="1e" style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1e</span>
+        <span style="font-size:13px;font-weight:500">Result region · Verify</span>
+      </div>
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:20px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">verdict</span>
+        <span style="font-size:19px;line-height:1.45">The claimed time implies a shadow bearing <span style="font-family:'IBM Plex Mono',monospace">47°</span> from the one observed.</span>
+        <span style="font-size:13px;color:var(--dim);line-height:1.55">The disagreement is eleven times the combined tolerance of the two figures, so it cannot be absorbed by measurement error. It does not say the photograph is fabricated; it says the stated time and this shadow cannot both be true.</span>
+        <div style="display:flex;gap:24px;align-items:center;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:20px 0">
+          <svg viewBox="0 0 232 150" style="width:232px;height:150px;flex:none">
+            <circle cx="95" cy="120" r="82" fill="none" stroke="var(--rule)" stroke-width="1"></circle>
+            <path d="M95,120 v-90" stroke="var(--rule2)" stroke-width="1" stroke-dasharray="3 3"></path>
+            <text x="95" y="24" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--faint)" text-anchor="middle">N</text>
+            <path d="M95,120 L167,80" stroke="var(--ink)" stroke-width="1.4" stroke-dasharray="5 3"></path>
+            <path d="M95,120 L172,116" stroke="var(--accent)" stroke-width="1.6"></path>
+            <path d="M137,98 A48,48 0 0,1 143,118" fill="none" stroke="var(--ink)" stroke-width="1"></path>
+            <text x="230" y="70" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--dim)" text-anchor="end">predicted</text>
+            <text x="230" y="136" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--accent)" text-anchor="end">observed</text>
+            <text x="112" y="106" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink)">47°</text>
+          </svg>
+          <div style="flex:1;display:flex;flex-direction:column;gap:11px">
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">claimed</span><span style="font-family:'IBM Plex Mono',monospace">2026-03-14 09:40 +01</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">site</span><span style="font-family:'IBM Plex Mono',monospace">48.8566 N 2.3522 E</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">bearing required</span><span style="font-family:'IBM Plex Mono',monospace">165.4° ± 0.2</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">bearing observed</span><span style="font-family:'IBM Plex Mono',monospace">118.6° ± 2.7</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">elevation required</span><span style="font-family:'IBM Plex Mono',monospace">27.9° ± 0.1</span></div>
+            <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">elevation observed</span><span style="font-family:'IBM Plex Mono',monospace">34.2° ± 1.8</span></div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">consistent alternatives at this site</span>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Same day, <span style="font-family:'IBM Plex Mono',monospace">07:55 — 08:21 +01</span></span><span style="font-family:'IBM Plex Mono',monospace;color:var(--dim)">both figures agree</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Same clock time, <span style="font-family:'IBM Plex Mono',monospace">04 May — 09 May</span></span><span style="font-family:'IBM Plex Mono',monospace;color:var(--dim)">azimuth agrees, elevation does not</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="1f" style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1f</span>
+        <span style="font-size:13px;font-weight:500">Result region · Time</span>
+      </div>
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:18px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">fitting windows · local time</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">2026-03-14 · 48.8566 N 2.3522 E</span>
+        </div>
+        <svg viewBox="0 0 562 172" style="width:562px;height:172px">
+          <defs>
+            <filter id="gnsoft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="4"></feGaussianBlur></filter>
+          </defs>
+          <g stroke="var(--rule)" stroke-width="1">
+            <path d="M0,120 H562"></path>
+          </g>
+          <g stroke="var(--rule)" stroke-width="0.7">
+            <path d="M23.4,120 v-5 M46.8,120 v-5 M70.2,120 v-5 M93.7,120 v-5 M117,120 v-5 M164,120 v-5 M187,120 v-5 M211,120 v-5 M234,120 v-5 M258,120 v-5 M304,120 v-5 M328,120 v-5 M351,120 v-5 M375,120 v-5 M398,120 v-5 M445,120 v-5 M468,120 v-5 M492,120 v-5 M515,120 v-5 M539,120 v-5"></path>
+          </g>
+          <g stroke="var(--rule2)" stroke-width="1">
+            <path d="M0,120 v-9 M140.5,120 v-9 M281,120 v-9 M421.5,120 v-9 M562,120 v-9"></path>
+          </g>
+          <g font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--faint)">
+            <text x="0" y="136">00</text><text x="133" y="136">06</text><text x="274" y="136">12</text>
+            <text x="414" y="136">18</text><text x="546" y="136">24</text>
+          </g>
+          <path d="M0,120 L140,120 L164,102 L187,86 L211,74 L234,66 L258,61 L281,59 L304,61 L328,66 L351,74 L375,86 L398,102 L421,120 L562,120"
+                fill="none" stroke="var(--rule2)" stroke-width="1.2"></path>
+          <path d="M281,59 v-14" stroke="var(--rule2)" stroke-width="0.7" stroke-dasharray="2 2"></path>
+          <text x="281" y="41" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--faint)" text-anchor="middle">solar noon 13:38</text>
+          <g filter="url(#gnsoft)">
+            <rect x="215" y="50" width="16" height="70" fill="var(--accent)" opacity="0.22"></rect>
+            <rect x="343" y="50" width="18" height="70" fill="var(--accent)" opacity="0.22"></rect>
+          </g>
+          <rect x="215" y="50" width="16" height="70" fill="var(--accent)" opacity="0.10"></rect>
+          <rect x="343" y="50" width="18" height="70" fill="var(--accent)" opacity="0.10"></rect>
+          <g stroke="var(--accent)" stroke-width="1">
+            <path d="M215,50 v70 M231,50 v70 M343,50 v70 M361,50 v70"></path>
+          </g>
+          <text x="223" y="163" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink)" text-anchor="middle">09:14 — 09:52</text>
+          <text x="352" y="163" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink)" text-anchor="middle">14:26 — 15:08</text>
+          <text x="562" y="80" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--faint)" text-anchor="end">solar elevation</text>
+        </svg>
+        <div style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--rule);padding-top:16px">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Morning window</span><span style="font-family:'IBM Plex Mono',monospace">09:14 — 09:52 &nbsp;·&nbsp; 38 min</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Afternoon window</span><span style="font-family:'IBM Plex Mono',monospace">14:26 — 15:08 &nbsp;·&nbsp; 42 min</span></div>
+          <span style="font-size:12px;color:var(--dim)">Two windows, because a bearing east of south and its mirror west of south produce the same shadow at this latitude. Nothing in the photograph distinguishes them; the elevation range is what sets each window's width.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1g / 1h ============ -->
+  <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+    <div id="1g" style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1g</span>
+        <span style="font-size:13px;font-weight:500">Result region · Locate, orthographic</span>
+        <span style="font-size:12px;color:var(--dim)">Scrubber sweeps the band. Drag it.</span>
+      </div>
+      <div style="width:610px;height:520px;background:var(--panel);border:1px solid var(--rule)">
+        <iframe src="{{ mapGlobe }}" title="Locate band, orthographic" style="width:100%;height:100%;border:0;display:block"></iframe>
+      </div>
+    </div>
+    <div id="1h" style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:12px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1h</span>
+        <span style="font-size:13px;font-weight:500">Result region · Locate, equirectangular</span>
+        <span style="font-size:12px;color:var(--dim)">Bearing supplied — the band collapses.</span>
+      </div>
+      <div style="width:610px;height:520px;background:var(--panel);border:1px solid var(--rule)">
+        <iframe src="{{ mapFlat }}" title="Locate band, equirectangular" style="width:100%;height:100%;border:0;display:block"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1i ============ -->
+  <div id="1i" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1i</span>
+      <span style="font-size:13px;font-weight:500">Value with uncertainty · component</span>
+      <span style="font-size:12px;color:var(--dim)">The number is never alone: it sits on the domain it was measured against, and carries the tier that produced it.</span>
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:30px 34px 34px;display:flex;flex-direction:column;gap:12px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">anatomy</span>
+        <div style="position:relative;padding-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation</span>
+            <span style="display:flex;align-items:center;gap:6px;border:1px solid var(--rule2);padding:2px 6px"><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600">T3</span><span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--dim)">± 6 %</span></span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:10px;margin-top:10px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:40px;font-variant-numeric:tabular-nums;line-height:1">34.2°</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:var(--dim)">± 1.8</span>
+          </div>
+          <div style="position:relative;height:26px;margin-top:16px">
+            <div style="position:absolute;left:0;right:0;top:12px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:36%;width:4%;top:5px;height:15px;background:color-mix(in srgb, var(--accent) 20%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+            <div style="position:absolute;left:38%;top:1px;width:1px;height:24px;background:var(--ink)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint);margin-top:4px"><span>0°</span><span>32.4 — 36.0</span><span>90°</span></div>
+        </div>
+        <div style="border-top:1px solid var(--rule);margin-top:14px;padding-top:16px;display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;gap:12px;font-size:12px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);width:22px">01</span><span style="width:150px;color:var(--dim)">point estimate</span><span style="flex:1">best fit across all marked objects</span></div>
+          <div style="display:flex;gap:12px;font-size:12px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);width:22px">02</span><span style="width:150px;color:var(--dim)">tolerance span</span><span style="flex:1">accent, and the only accent in the panel</span></div>
+          <div style="display:flex;gap:12px;font-size:12px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);width:22px">03</span><span style="width:150px;color:var(--dim)">domain brackets</span><span style="flex:1">the full range the quantity could occupy, always drawn — so a wide span reads as wide</span></div>
+          <div style="display:flex;gap:12px;font-size:12px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);width:22px">04</span><span style="width:150px;color:var(--dim)">tier chip</span><span style="flex:1">what supplied the focal length, hence what the span is worth</span></div>
+        </div>
+      </div>
+
+      <div style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:26px 30px;display:flex;flex-direction:column;gap:26px">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">states</span>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation · tight</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">T1</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px"><span style="font-family:'IBM Plex Mono',monospace;font-size:26px">34.2°</span><span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">± 0.4</span></div>
+          <div style="position:relative;height:22px">
+            <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:37.4%;width:0.9%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 22%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+            <div style="position:absolute;left:38%;top:1px;width:1px;height:19px;background:var(--ink)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>33.8 — 34.6</span><span>90°</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation · weak prior</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">T5</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px"><span style="font-family:'IBM Plex Mono',monospace;font-size:26px">31.6°</span><span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">+ 7.4 / − 6.9</span></div>
+          <div style="position:relative;height:22px">
+            <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:27.4%;width:15.9%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 14%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+            <div style="position:absolute;left:35.1%;top:1px;width:1px;height:19px;background:var(--ink)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>24.7 — 39.0</span><span>90°</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation · bounded one side</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">T4</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px"><span style="font-family:'IBM Plex Mono',monospace;font-size:26px">≤ 5.0°</span><span style="font-size:12px;color:var(--dim)">lower bound unresolved</span></div>
+          <div style="position:relative;height:22px">
+            <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;width:5.5%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 16%, transparent);border-right:1px solid var(--accent)"></div>
+            <div style="position:absolute;left:5.5%;top:8px;width:14px;height:5px;background:none;border-top:1px solid var(--accent)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>refraction floor at 5°</span><span>90°</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar azimuth · two intervals</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">T3</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px"><span style="font-family:'IBM Plex Mono',monospace;font-size:26px">118.6°</span><span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--dim)">or 241.4° ± 2.7</span></div>
+          <div style="position:relative;height:22px">
+            <div style="position:absolute;left:0;right:0;top:10px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:5px;width:1px;height:11px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:32%;width:1.5%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 20%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+            <div style="position:absolute;left:66.3%;width:1.5%;top:4px;height:13px;background:color-mix(in srgb, var(--accent) 20%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>mirror pair · hemisphere not yet decided</span><span>360°</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solar elevation · withheld</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--dim)">T3</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:9px"><span style="font-family:'IBM Plex Mono',monospace;font-size:26px;color:var(--faint)">—</span><span style="font-size:12px;color:var(--dim)">residual 4.87° · geometry rejected</span></div>
+          <div style="position:relative;height:22px">
+            <div style="position:absolute;left:0;right:0;top:4px;height:13px;background:repeating-linear-gradient(45deg,var(--rule) 0 1px,transparent 1px 5px);border-left:1px solid var(--rule2);border-right:1px solid var(--rule2)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>no interval can be stated</span><span>90°</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1j ============ -->
+  <div id="1j" style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1j</span>
+      <span style="font-size:13px;font-weight:500">Calibration tier badge · all five tiers</span>
+      <span style="font-size:12px;color:var(--dim)">Discrete tiers, not a score. Five filled pips is not a compliment; it is a statement about the file.</span>
+    </div>
+    <div style="width:1240px;background:var(--panel);border:1px solid var(--rule)">
+      <div style="display:flex;padding:14px 22px;border-bottom:1px solid var(--rule);font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">
+        <span style="width:150px">badge</span><span style="width:330px">source of focal length</span><span style="width:130px">focal tolerance</span><span style="width:170px">elevation span</span><span style="flex:1">what it means downstream</span>
+      </div>
+      <div style="display:flex;align-items:center;padding:16px 22px;border-bottom:1px solid var(--rule)">
+        <span style="width:150px"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T1</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span></span></span></span>
+        <span style="width:330px;font-size:12.5px">EXIF focal length, camera matched in sensor database</span>
+        <span style="width:130px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 0.4 %</span>
+        <span style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 0.4°</span>
+        <span style="flex:1;font-size:12px;color:var(--dim)">Bands are narrow enough to name a city block.</span>
+      </div>
+      <div style="display:flex;align-items:center;padding:16px 22px;border-bottom:1px solid var(--rule)">
+        <span style="width:150px"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T2</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span></span></span></span>
+        <span style="width:330px;font-size:12.5px">EXIF focal length, sensor size inferred from model name</span>
+        <span style="width:130px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 3 %</span>
+        <span style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 1.1°</span>
+        <span style="flex:1;font-size:12px;color:var(--dim)">Usable for verification; loose for location.</span>
+      </div>
+      <div style="display:flex;align-items:center;padding:16px 22px;border-bottom:1px solid var(--rule)">
+        <span style="width:150px"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T3</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span></span></span></span>
+        <span style="width:330px;font-size:12.5px">Self-calibrated from three orthogonal vanishing points</span>
+        <span style="width:130px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 6 %</span>
+        <span style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 1.8°</span>
+        <span style="flex:1;font-size:12px;color:var(--dim)">Independent of metadata, so it can contradict it — see <a href="#1n">1n</a>.</span>
+      </div>
+      <div style="display:flex;align-items:center;padding:16px 22px;border-bottom:1px solid var(--rule)">
+        <span style="width:150px"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T4</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span></span></span></span>
+        <span style="width:330px;font-size:12.5px">Self-calibrated from verticals and a horizon estimate</span>
+        <span style="width:130px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 14 %</span>
+        <span style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 4.2°</span>
+        <span style="flex:1;font-size:12px;color:var(--dim)">Time windows widen past half an hour.</span>
+      </div>
+      <div style="display:flex;align-items:center;padding:16px 22px">
+        <span style="width:150px"><span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:4px 8px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T5</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span></span></span></span>
+        <span style="width:330px;font-size:12.5px">No calibration · weak prior, 24–70 mm equivalent</span>
+        <span style="width:130px;font-family:'IBM Plex Mono',monospace;font-size:12px">± 38 %</span>
+        <span style="width:170px;font-family:'IBM Plex Mono',monospace;font-size:12px">+ 7.4 / − 6.9°</span>
+        <span style="flex:1;font-size:12px;color:var(--dim)">Azimuth survives; elevation is indicative only.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 1k – 1n ============ -->
+  <div style="display:flex;flex-direction:column;gap:11px">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:2px 6px;color:var(--dim)">1k — 1n</span>
+      <span style="font-size:13px;font-weight:500">Degraded states</span>
+      <span style="font-size:12px;color:var(--dim)">Four results, not four errors. Each says what was lost, what survives, and what to do next.</span>
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;width:1240px">
+
+      <div id="1k" style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">1k · metadata stripped</span>
+          <span style="display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule2);padding:3px 7px"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600">T5</span><span style="display:inline-flex;gap:2px"><span style="width:5px;height:9px;background:var(--ink)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span><span style="width:5px;height:9px;border:1px solid var(--rule2)"></span></span></span>
+        </div>
+        <span style="font-size:16px">No focal length in the file. Every range widens, and here is by how much.</span>
+        <span style="font-size:12.5px;color:var(--dim)">The image carries no EXIF and no straight architectural edges to self-calibrate from, so focal length falls back to a 24–70 mm equivalent prior. Azimuth barely notices; elevation and everything derived from it lose most of their sharpness.</span>
+        <div style="display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--rule);padding-top:16px">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim)"><span>elevation · with EXIF</span><span>± 0.4°</span></div>
+            <div style="position:relative;height:13px">
+              <div style="position:absolute;left:0;right:0;top:6px;height:1px;background:var(--rule)"></div>
+              <div style="position:absolute;left:37.4%;width:0.9%;top:0;height:13px;background:color-mix(in srgb, var(--ink) 22%, transparent);border-left:1px solid var(--rule2);border-right:1px solid var(--rule2)"></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:11px"><span>elevation · weak prior</span><span>+ 7.4 / − 6.9°</span></div>
+            <div style="position:relative;height:13px">
+              <div style="position:absolute;left:0;right:0;top:6px;height:1px;background:var(--rule2)"></div>
+              <div style="position:absolute;left:27.4%;width:15.9%;top:0;height:13px;background:color-mix(in srgb, var(--accent) 14%, transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent)"></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">Locate band area</span><span style="font-family:'IBM Plex Mono',monospace">3.1 → 12.8 × 10⁶ km² &nbsp;(4.1 ×)</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--dim)">Time window</span><span style="font-family:'IBM Plex Mono',monospace">38 min → 2 h 51 min</span></div>
+        </div>
+        <div style="display:flex;gap:10px;border-top:1px solid var(--rule);padding-top:16px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--ink);padding:8px 13px">SELF-CALIBRATE FROM EDGES</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:8px 13px;color:var(--dim)">ENTER FOCAL LENGTH</span>
+        </div>
+      </div>
+
+      <div id="1l" style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">1l · geometry invalid</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px">residual 4.87°</span>
+        </div>
+        <span style="font-size:16px">The two objects disagree by more than the method tolerates. No elevation will be reported.</span>
+        <div style="position:relative;height:26px">
+          <div style="position:absolute;left:0;right:0;top:12px;height:1px;background:var(--rule2)"></div>
+          <div style="position:absolute;left:25%;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+          <div style="position:absolute;left:62%;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+          <div style="position:absolute;left:0;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">0</div>
+          <div style="position:absolute;left:25%;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">1.0</div>
+          <div style="position:absolute;left:62%;top:22px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--faint)">2.5 refuse</div>
+        </div>
+        <div style="position:relative;height:20px;margin-top:-6px">
+          <div style="position:absolute;left:0;right:0;top:0;height:14px;background:repeating-linear-gradient(45deg,var(--rule) 0 1px,transparent 1px 5px)"></div>
+          <span style="position:absolute;right:0;top:-1px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim);background:var(--panel);padding-left:6px">measured 4.87° · off scale</span>
+        </div>
+        <span style="font-size:12.5px;color:var(--dim)">A residual this size means one of the method's assumptions is false, and the geometry cannot tell which. In order of frequency:</span>
+        <div style="display:flex;flex-direction:column;gap:9px">
+          <div style="display:flex;gap:12px;font-size:12.5px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint)">01</span><span>The ground under the two objects is not level — a slope of 4° would produce exactly this.</span></div>
+          <div style="display:flex;gap:12px;font-size:12.5px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint)">02</span><span>One marked object is not vertical, or its shadow falls on a different surface.</span></div>
+          <div style="display:flex;gap:12px;font-size:12.5px"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint)">03</span><span>The image is composited from more than one source.</span></div>
+        </div>
+        <div style="border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:12px">
+          <span style="font-size:12.5px">Shadow bearing does not depend on the vertical scale, so <span style="font-family:'IBM Plex Mono',monospace">118.6° ± 2.7</span> still stands. Verify and Time can run on azimuth alone.</span>
+          <div style="display:flex;gap:10px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--ink);padding:8px 13px">CONTINUE · AZIMUTH ONLY</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;border:1px solid var(--rule2);padding:8px 13px;color:var(--dim)">RE-MARK OBJ 02</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="1m" style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">1m · sun too low</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px">3.1° estimated</span>
+        </div>
+        <span style="font-size:16px">Below 5° the atmosphere bends the light more than the geometry can account for.</span>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="position:relative;height:26px">
+            <div style="position:absolute;left:0;right:0;top:12px;height:1px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+            <div style="position:absolute;right:0;top:6px;width:1px;height:13px;background:var(--rule2)"></div>
+            <div style="position:absolute;left:0;width:5.5%;top:5px;height:15px;background:repeating-linear-gradient(45deg,var(--rule) 0 1px,transparent 1px 5px);border-right:1px solid var(--rule2)"></div>
+            <div style="position:absolute;left:0;width:3.4%;top:5px;height:15px;background:color-mix(in srgb, var(--accent) 16%, transparent);border-right:1px solid var(--accent)"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)"><span>0°</span><span>hatched: refraction-dominated</span><span>90°</span></div>
+        </div>
+        <span style="font-size:12.5px;color:var(--dim)">Refraction lifts the apparent sun by up to 0.5° near the horizon, and the shadow lengthens hyperbolically: a 1-pixel error in the shadow tip moves the elevation by 0.9° here, against 0.05° at midday. The instrument reports a bound instead of a value.</span>
+        <div style="display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--rule);padding-top:16px">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="color:var(--dim)">elevation</span><span style="font-family:'IBM Plex Mono',monospace">≤ 5.0° · no interval</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="color:var(--dim)">azimuth</span><span style="font-family:'IBM Plex Mono',monospace">241.4° ± 3.1 · unaffected</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="color:var(--dim)">time windows</span><span style="font-family:'IBM Plex Mono',monospace">± 41 min, near sunset</span></div>
+          <span style="font-size:12px;color:var(--dim)">Low sun is not a poor photograph. Bearing near sunset constrains the date sharply, so Locate often does better here than at noon.</span>
+        </div>
+      </div>
+
+      <div id="1n" style="width:610px;background:var(--panel);border:1px solid var(--rule);padding:24px;display:flex;flex-direction:column;gap:16px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)">1n · metadata contradicts geometry</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px">Δ 23 %</span>
+        </div>
+        <span style="font-size:16px">Two focal lengths, both internally consistent. They cannot both describe this image.</span>
+        <div style="display:flex;border:1px solid var(--rule2)">
+          <div style="flex:1;padding:16px;display:flex;flex-direction:column;gap:8px;border-right:1px solid var(--rule2)">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">from exif · T2</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:24px">35.0 mm</span>
+            <span style="font-size:12px;color:var(--dim)">implies elevation 41.7° ± 1.1</span>
+          </div>
+          <div style="flex:1;padding:16px;display:flex;flex-direction:column;gap:8px">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">self-calibrated · T3</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:24px">27.1 mm</span>
+            <span style="font-size:12px;color:var(--dim)">implies elevation 34.2° ± 1.8</span>
+          </div>
+        </div>
+        <span style="font-size:12.5px;color:var(--dim)">The vanishing points of the marked verticals fix the focal length independently of the file's claims. A 7.9 mm gap is far outside both tolerances, which means the image has been cropped or resized since capture, or the metadata was edited. Either way it is a finding about the file, and Gnomon records it rather than resolving it.</span>
+        <div style="border-top:1px solid var(--rule);padding-top:16px;display:flex;flex-direction:column;gap:12px">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">solve with</span>
+          <div style="display:flex;border:1px solid var(--rule2);width:max-content">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;padding:8px 14px;color:var(--dim)">EXIF</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;padding:8px 14px;color:var(--dim);border-left:1px solid var(--rule2)">SELF-CAL</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.12em;padding:8px 14px;background:var(--ink);color:var(--panel);border-left:1px solid var(--rule2)">BOTH · SHOW TWO BANDS</span>
+          </div>
+          <span style="font-size:12px;color:var(--dim)">Two bands is the default. A result region showing both disagreeing solutions is more informative than either alone.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;'light'|'dark'&quot;,&quot;section&quot;:&quot;Appearance&quot;},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#C4531D&quot;,&quot;options&quot;:[&quot;#C4531D&quot;,&quot;#1F6F7A&quot;,&quot;#5B4BB7&quot;,&quot;#8A6A18&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Appearance&quot;},&quot;tolerance&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:1.8,&quot;min&quot;:0.4,&quot;max&quot;:7.4,&quot;step&quot;:0.1,&quot;unit&quot;:&quot;°&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Measurement&quot;}}">
+class Component extends DCLogic {
+  state = { theme: null };
+  get theme(){ return this.state.theme || this.props.theme || 'light'; }
+  applyTheme(){
+    document.documentElement.setAttribute('data-theme', this.theme);
+    const a = this.props.accent;
+    if (a) document.documentElement.style.setProperty('--accent', a);
+  }
+  componentDidMount(){ this.applyTheme(); }
+  componentDidUpdate(){ this.applyTheme(); }
+  renderVals(){
+    const t = this.theme;
+    const tol = this.props.tolerance ?? 1.8;
+    const q = (extra) => 'locate-map.html?theme=' + t + '&h=34.2&tol=' + tol + '&' + extra;
+    return {
+      toggleTheme: () => this.setState({ theme: this.theme === 'dark' ? 'light' : 'dark' }),
+      mapGlobe: q('proj=ortho&auto=1'),
+      mapFlat: q('proj=flat&az=1&azobs=118.6'),
+      mapCompact: q('proj=ortho&compact=1')
+    };
+  }
+}
+
+</script>
+</body>
+</html>

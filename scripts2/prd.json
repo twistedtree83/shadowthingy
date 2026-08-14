@@ -160,7 +160,7 @@
       "id": "G16",
       "issue": 21,
       "title": "Visual system: import the Claude Design source",
-      "passes": false,
+      "passes": true,
       "afk": false,
       "gate": "design-login",
       "depends": [
